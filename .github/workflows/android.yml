@@ -46,6 +46,27 @@ jobs:
     timeout-minutes: 45
 
     steps:
+      # Free ~30 GB of disk on the runner before we start downloading
+      # SDKs. The default ubuntu-22.04 image only has ~14 GB free,
+      # which the Android NDK + the four Android Rust target-tripples
+      # exhaust on debug builds (cross-compile artifacts add ~5 GB
+      # per arch). Removing pre-cached tooling we don't need
+      # (Haskell, .NET, CodeQL, Ruby, the pre-cached Android NDK
+      # we re-fetch via nttld/setup-ndk anyway, Docker images) gets
+      # us comfortably to ~45 GB free.
+      - name: Free disk space
+        run: |
+          echo "Before:"
+          df -h /
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /usr/local/lib/android/sdk/ndk || true
+          sudo rm -rf /opt/ghc || true
+          sudo rm -rf /opt/hostedtoolcache/CodeQL || true
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY/Ruby" || true
+          sudo docker image prune --all --force || true
+          echo "After:"
+          df -h /
+
       - uses: actions/checkout@v4
 
       # Node first so Vite + the JS shell are ready before Cargo needs
