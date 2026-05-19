@@ -1,0 +1,48 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "LocalForge",
+  "version": "0.0.1",
+  "identifier": "com.localforge.mobile",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "LocalForge",
+        "label": "main"
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "apk", "aab"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/icon.png"
+    ],
+    "category": "Utility",
+    "shortDescription": "Control your LocalForge servers from your phone",
+    "longDescription": "LocalForge mobile lets you monitor and control the game servers running on your LocalForge desktop or VPS agent, from anywhere your phone has signal."
+  },
+  "plugins": {
+    "deep-link": {
+      "mobile": [
+        {
+          "host": "localforge.gg",
+          "pathPrefix": ["/auth/mobile-callback"]
+        }
+      ],
+      "desktop": {
+        "schemes": ["localforge"]
+      }
+    }
+  }
+}

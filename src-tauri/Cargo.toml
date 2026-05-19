@@ -1,0 +1,77 @@
+[package]
+name = "localforge-mobile"
+version = "0.0.1"
+description = "LocalForge mobile companion — iOS + Android"
+authors = ["Fabrizio"]
+edition = "2021"
+license-file = "../LICENSE"
+
+# Mobile builds want both a staticlib (Android NDK links it) and a
+# cdylib (iOS dynamic loader). `rlib` lets `main.rs` still produce a
+# desktop binary for local web-only iteration.
+[lib]
+name = "localforge_mobile_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tauri = { version = "2", features = [] }
+
+# Cross-platform deep-link plugin — receives the cloud OAuth callback.
+# Mobile flavour registers an Android intent filter + iOS associated
+# domain entry; both fire `tauri::Manager::on_deep_link` on arrival.
+tauri-plugin-deep-link = "2"
+
+# Shared crates pulled from the public localforge repo. Cargo walks the
+# repo tree at fetch time, finds the Cargo.toml whose package name
+# matches, and uses that crate. No `subpath` needed.
+#
+# Pinned to `main` while everything moves fast. Once the public APIs
+# stabilise we'll pin to a tag (e.g. `tag = "v0.2.0-mobile-shared"`)
+# so a force-push or breaking change upstream can't ambush a mobile
+# release.
+localforge-core = { git = "https://github.com/fabri2000779/localforge.git", branch = "main" }
+localforge-backend-remote = { git = "https://github.com/fabri2000779/localforge.git", branch = "main" }
+
+# Cryptography stack — matches the desktop byte-for-byte so a DEK
+# wrapped on one side unwraps on the other. The desktop's `cloud/*`
+# helpers will be extracted into a shared `localforge-cloud-client`
+# crate; until then we re-link the same primitives here and reimplement
+# the small amount of glue we need.
+aes-gcm = "0.10"
+scrypt = { version = "0.11", default-features = false }
+rand = "0.9"
+base64 = "0.22"
+sha2 = "0.10"
+
+# Cloud API + WS relay. `rustls-no-provider` matches the choice in the
+# desktop and the backend-remote crate so Cargo dedupes the dependency
+# tree and the binary doesn't pull two TLS stacks.
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json"] }
+tokio-tungstenite = { version = "0.28", default-features = false, features = ["rustls-tls-webpki-roots", "connect"] }
+
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "2"
+async-trait = "0.1"
+
+[features]
+# `custom-protocol` is the standard Tauri release-mode feature — it
+# replaces the dev `localhost` URL with a `tauri://` scheme so the
+# bundled HTML/JS load from the app package, not over the network.
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+# Release profile mirrors the desktop's: small binaries are even more
+# important on mobile (App Store + Play Store care about download size).
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

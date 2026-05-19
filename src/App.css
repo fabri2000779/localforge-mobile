@@ -1,0 +1,89 @@
+@import 'tailwindcss';
+
+/* The mobile shell mirrors the desktop's dark palette so users
+   recognise it instantly. Tweaked for thumb-reach: bigger hit
+   areas, status bar respect on iOS via `safe-area-inset-*`. */
+
+:root {
+  --bg: #07090f;
+  --surface: rgba(14, 19, 28, 0.85);
+  --border: rgba(148, 163, 184, 0.16);
+  --text: #e2e8f0;
+  --text-muted: #94a3b8;
+  --accent: #60a5fa;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  /* Disable iOS bounce / pull-to-refresh — feels wrong in app-shell UIs. */
+  overscroll-behavior: none;
+  /* Stop the WebView from selecting text by default like it's a webpage. */
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.app-titlebar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 18px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.app-main {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 18px;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 22px;
+}
+
+.card h1 {
+  font-size: 22px;
+  font-weight: 700;
+  margin: 0 0 10px;
+}
+
+.card p {
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text-muted);
+  margin: 0 0 12px;
+}
+
+.card .hint {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  margin-top: 14px;
+}
+
+.card code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  background: rgba(59, 130, 246, 0.1);
+  color: var(--accent);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
