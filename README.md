@@ -4,10 +4,12 @@ iOS + Android companion app for [LocalForge](https://localforge.gg).
 Monitor and control the game servers running on your LocalForge
 desktop or VPS — from your phone.
 
-> Status: **v0.1.0 — feature-complete for stores-pending milestone.**
-> Code compiles and runs in the web preview today; native shells
-> (Android Studio for APK, Mac + Xcode for IPA) still need to be
-> generated on a dev machine before the first store upload.
+> Status: **v0.2.0 — live state + console tail working end-to-end.**
+> Code compiles and runs in the web preview today. CI builds debug
+> APKs on every push to main and signed APK + AAB + IPA on tag pushes
+> (signing material expected in repo secrets — see workflows/).
+> Native shells generated on the runner; first store upload still
+> needs an Apple Developer team + an Android keystore (one-off).
 
 ## What it is (and isn't)
 
@@ -30,7 +32,7 @@ LocalForge node (desktop or VPS agent) through the cloud.
                       └─ VPS (localforge-agent over HTTPS)
 ```
 
-## v0.1.0 — what works
+## v0.2.0 — what works
 
 ### Auth
 - Email + password sign-in / sign-up
@@ -41,29 +43,37 @@ LocalForge node (desktop or VPS agent) through the cloud.
 - Token persisted to sandboxed app-data dir (mobile keychain
   migration pending — see roadmap)
 
-### Servers
-- Server list via `GET /v1/sync/servers` (plaintext metadata only;
-  encrypted blobs are stripped at the Rust↔JS boundary)
-- Paywall card for free-tier accounts (cloud sync needs Hobby+)
-- Pull-down refresh (manual button in header)
-- Relative-time meta ("Last synced 12m ago")
-- Empty / error / loading states all explicit
+### Server list
+- `GET /v1/sync/servers` for the static metadata (id, name,
+  last-synced timestamp; encrypted blobs stripped at the Rust↔JS
+  boundary)
+- **Live per-server status badges** — Running / Stopped /
+  Starting / Stopping / Crashed / Installing / Unknown — fed by
+  the desktop's owner-side `state.snapshot` reply on relay connect
+  + per-server `server.state_changed` events as the status moves
+- Connection badge in the header (Live / Connecting / Offline)
+- Pull-to-refresh re-requests the full snapshot
+- Empty / error / paywall states all explicit
 
 ### Server detail
 - Tap a row → server detail screen
 - Start / Stop / Restart buttons send `cmd` messages through the
-  relay; the owner's desktop executes via its existing
-  `RelayCommandExecutor` and sends back a `cmd_result` event
-- Toast surfaces the result (server-side error string included
-  when the command fails)
+  relay; the owner's desktop executes them via its
+  `RelayCommandExecutor` and ships back a `cmd_result` event
+- Toast surfaces the result (server-side error string included on
+  failure)
+- **Live console tail** — sends `server.attach`, renders incoming
+  `console_line` events forwarded by the desktop's `RelayLogBridge`.
+  500-line ring buffer, auto-scroll to bottom unless the user has
+  scrolled up. `server.detach` on unmount so the relay quiets back
+  down.
 
 ### Relay
 - Persistent WebSocket to `wss://api.localforge.gg/v1/relay/<orgId>`
 - Auto-reconnect with 250ms → 30s ±20% backoff (same shape as the
   desktop; a cloud-side deploy is invisible to the user)
-- Connection badge in the server list header (Live / Connecting / Offline)
-- Subscribers for `relay-event`, `relay-presence`, `relay-error`,
-  `relay-hello`
+- Subscribers for `relay-event` / `relay-presence` / `relay-error` /
+  `relay-hello` / `relay-connected` / `relay-disconnected`
 
 ## Stack
 
@@ -131,34 +141,28 @@ npm run tauri:ios:init                       # generate src-tauri/gen/apple (one
 npm run tauri:ios:dev
 ```
 
-## v0.2.0 roadmap
+## v0.3 roadmap
 
-These need a co-commit on the desktop's `serverwave-anywhere`:
-
-- **Per-row live state badges** — owner adds a `state.snapshot` cmd
-  handler in `RelayCommandExecutor` (currently CMD_MAP only covers
-  per-server actions, not list-wide queries). Mobile sends
-  `state.snapshot` on connect + on pull-to-refresh, parses the
-  responding event into per-row "running / stopped / crashed"
-  badges.
-- **Server-event broadcasts** — owner hooks into the
-  bollard container-state event stream and emits
-  `event: server.state_changed { id, state }` on transitions, so
-  mobile updates instantly without polling.
-- **Console tail** — mobile sends `server.attach` (already in
-  CMD_MAP), subscribes to `kind: console_line` events the desktop
-  forwards via `RelayLogBridge`.
-
-These can ship independently:
-
-- iOS Keychain Services + Android Keystore for the JWT (currently a
-  sandboxed file).
-- Push notifications for crash alerts (needs APNs + FCM, deferred
-  until store submission to avoid burning the test entitlements).
-- Universal Links + App Links replacing the custom URL scheme
-  (needs Apple Developer team for `apple-app-site-association`).
-- GitHub Actions: APK build (macos / ubuntu / windows-2022 ok),
-  IPA build (macos-14 runner only).
+- **iOS Keychain Services + Android Keystore** for the JWT
+  (currently a sandboxed file). Tauri plugin abstraction so
+  desktop's `keyring` crate and mobile's platform keychain share
+  one trait.
+- **Push notifications** for crash + retention-period alerts
+  (needs APNs + FCM, deferred until first store submission to
+  avoid burning the test entitlements).
+- **Universal Links + App Links** replacing the custom URL scheme
+  (needs Apple Developer team for `apple-app-site-association` on
+  localforge.gg + Android `assetlinks.json`).
+- **Server detail polish** — RAM / CPU mini-charts, file manager
+  via `server.list_files` / `server.read_file` / `server.write_file`
+  (all already in the relay allowlist).
+- **Org switcher** — mobile currently follows the primary
+  membership. Switching needs UI + a small relay reconnect to the
+  new org's session.
+- **Real-time crash detection** — desktop's bollard
+  container-events stream → owner emits `server.state_changed`
+  with sub-second latency (current ceiling is the 10 s fetchServers
+  poll tick).
 
 ## License
 
