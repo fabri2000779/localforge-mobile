@@ -1,0 +1,147 @@
+# Android APK / AAB build pipeline.
+#
+# Triggers
+#   - Push to main → unsigned debug APK uploaded as artifact (smoke test
+#     that the workspace still builds after every commit).
+#   - Tag v* push → signed release APK + AAB uploaded as a GitHub
+#     Release asset, ready for Play Console upload.
+#
+# Signing
+#   The release path expects three secrets in the repo:
+#       ANDROID_KEYSTORE_BASE64  — `base64 -w0 your.keystore` output
+#       ANDROID_KEYSTORE_PASSWORD
+#       ANDROID_KEY_ALIAS
+#       ANDROID_KEY_PASSWORD
+#   Set those and the release job decodes the keystore into
+#   src-tauri/gen/android/.signing/release.keystore at build time.
+#   Without the secrets the release job still runs and uploads an
+#   UNSIGNED APK — useful while bootstrapping (you can side-load it
+#   onto a test device via `adb install`), but Play Console rejects.
+#
+# Caching
+#   Gradle dependencies live in ~/.gradle/caches — cached by
+#   gradle/wrapper hash. The Rust target dir for the android targets
+#   lives in src-tauri/target/<triple>; cached by Cargo.lock + tauri
+#   conf hash.
+#
+# Toolchain
+#   JDK 17 (Tauri 2 mobile baseline). NDK r26d (latest LTS). Android
+#   SDK 35 (Tauri 2 targetSdk default). Stable rustup channel.
+
+name: Android
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write  # for the release upload step
+
+jobs:
+  apk:
+    name: Build APK
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Node first so Vite + the JS shell are ready before Cargo needs
+      # them (tauri build does `npm run build` as a beforeBuildCommand).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run build
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Android SDK + NDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: |
+            platforms;android-35
+            platform-tools
+            build-tools;35.0.0
+            ndk;26.3.11579264
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> src-tauri/target
+          # Tauri's android gen folder is generated at build time and
+          # isn't worth caching (cheap to regenerate, churns daily).
+          cache-on-failure: true
+
+      - name: Generate Tauri Android project
+        run: npx --no-install tauri android init --ci
+        env:
+          NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
+
+      # ─── Signing (release only) ──────────────────────────────────
+      # Only runs when the build is for a tag. Debug builds use the
+      # default debug keystore Android Studio ships.
+      - name: Decode signing keystore
+        if: startsWith(github.ref, 'refs/tags/v') && env.ANDROID_KEYSTORE_BASE64 != ''
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          mkdir -p src-tauri/gen/android/.signing
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > src-tauri/gen/android/.signing/release.keystore
+
+      - name: Write key.properties
+        if: startsWith(github.ref, 'refs/tags/v') && env.ANDROID_KEYSTORE_BASE64 != ''
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          cat > src-tauri/gen/android/key.properties <<EOF
+          storeFile=.signing/release.keystore
+          storePassword=$ANDROID_KEYSTORE_PASSWORD
+          keyAlias=$ANDROID_KEY_ALIAS
+          keyPassword=$ANDROID_KEY_PASSWORD
+          EOF
+
+      # ─── Build ───────────────────────────────────────────────────
+      - name: Build debug APK (push to main)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        run: npx --no-install tauri android build --debug --apk
+        env:
+          NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
+
+      - name: Build release APK + AAB (tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: npx --no-install tauri android build --apk --aab
+        env:
+          NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
+
+      # ─── Output ──────────────────────────────────────────────────
+      - name: Upload debug APK
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: LocalForge-debug-apk
+          path: src-tauri/gen/android/app/build/outputs/apk/universal/debug/*.apk
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload to Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk
+            src-tauri/gen/android/app/build/outputs/bundle/universalRelease/*.aab
+          draft: true
+          fail_on_unmatched_files: false
