@@ -5,6 +5,7 @@
 
 mod auth;
 mod oauth;
+mod sync;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -36,6 +37,7 @@ pub fn run() {
             auth::cloud_logout,
             auth::cloud_request_password_reset,
             oauth::cloud_oauth_start,
+            sync::cloud_servers_list,
         ])
         .setup(|app| {
             tracing::info!(version = env!("CARGO_PKG_VERSION"), "LocalForge mobile starting");

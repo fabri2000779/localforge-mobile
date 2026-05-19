@@ -94,6 +94,22 @@ export function cloudRequestPasswordReset(email: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Sync — the cloud-stored server list. Mobile only ever reads
+// (observation-only in v0.0.x); the encrypted blob is stripped on the
+// Rust side so the IPC stays lean.
+// ---------------------------------------------------------------------------
+
+export interface ServerSummary {
+  id: string;
+  name: string;
+  updatedAt: number;
+}
+
+export function cloudServersList(): Promise<ServerSummary[]> {
+  return invoke<ServerSummary[]>('cloud_servers_list');
+}
+
+// ---------------------------------------------------------------------------
 // OAuth — fire-and-forget. The actual token arrives via the
 // `cloud://signed-in` event AFTER the user completes the browser flow;
 // callers subscribe with `onSignedIn()` below before invoking start.

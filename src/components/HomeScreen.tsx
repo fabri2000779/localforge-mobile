@@ -1,19 +1,19 @@
 /**
- * Post-login holding screen. v0.0.x just confirms you're signed in
- * and shows plan/subscription state. The server list, live console
- * and command sender land in subsequent commits once the relay
- * client is wired.
+ * Signed-in home. Shows account state and the entry into the server
+ * list. v0.0.x has just one nav target (servers); future commits add
+ * billing, audit log, settings.
  */
 import { useState } from 'react';
-import { LogOut, Sparkles } from 'lucide-react';
+import { ChevronRight, LogOut, ServerCog, Sparkles } from 'lucide-react';
 import { cloudLogout, type Me } from '../lib/cloud';
 
 interface Props {
   me: Me;
   onSignedOut: () => void;
+  onOpenServers: () => void;
 }
 
-export function HomeScreen({ me, onSignedOut }: Props) {
+export function HomeScreen({ me, onSignedOut, onOpenServers }: Props) {
   const [loggingOut, setLoggingOut] = useState(false);
 
   async function logout() {
@@ -67,14 +67,29 @@ export function HomeScreen({ me, onSignedOut }: Props) {
         </div>
       </section>
 
+      <button type="button" className="nav-card" onClick={onOpenServers}>
+        <div className="nav-card-icon">
+          <ServerCog size={20} />
+        </div>
+        <div className="nav-card-body">
+          <div className="nav-card-title">Your servers</div>
+          <div className="nav-card-sub">
+            {plan === 'free'
+              ? 'Sync unlocks with Hobby — preview the list anyway'
+              : 'Names, last sync time, and (next) live status'}
+          </div>
+        </div>
+        <ChevronRight size={18} className="nav-card-chev" />
+      </button>
+
       <section className="card card-coming-soon">
         <Sparkles size={18} color="#60a5fa" />
         <div>
-          <h2>Server list arrives next</h2>
+          <h2>Live state arrives next</h2>
           <p>
             The mobile relay client is the next piece — once it lands you'll
-            see every server running on your LocalForge desktop or VPS, and
-            you'll be able to start, stop and tail logs from your phone.
+            see real-time status, console tails and start/stop controls
+            for every server running on your LocalForge desktop or VPS.
           </p>
         </div>
       </section>
