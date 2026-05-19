@@ -46,23 +46,27 @@ jobs:
     timeout-minutes: 45
 
     steps:
-      # Free ~30 GB of disk on the runner before we start downloading
-      # SDKs. The default ubuntu-22.04 image only has ~14 GB free,
-      # which the Android NDK + the four Android Rust target-tripples
-      # exhaust on debug builds (cross-compile artifacts add ~5 GB
-      # per arch). Removing pre-cached tooling we don't need
-      # (Haskell, .NET, CodeQL, Ruby, the pre-cached Android NDK
-      # we re-fetch via nttld/setup-ndk anyway, Docker images) gets
-      # us comfortably to ~45 GB free.
+      # Free ~20 GB of disk on the runner before we start. The default
+      # ubuntu-22.04 image only has ~14 GB free, which the Rust cross-
+      # compile to four Android target-tripples + the gradle APK
+      # packaging exhaust (run 2 died at packageUniversalDebug with
+      # "No space left on device" 17 minutes in).
+      #
+      # IMPORTANT: do NOT remove /usr/local/lib/android/sdk/ndk — the
+      # runner ships with a stable NDK pre-installed there and Tauri's
+      # `android init` looks for it via ANDROID_NDK_LATEST_HOME. Using
+      # the pre-cached one is faster AND avoids nttld/setup-ndk
+      # downloading a duplicate (~3 GB wasted).
       - name: Free disk space
         run: |
           echo "Before:"
           df -h /
           sudo rm -rf /usr/share/dotnet || true
-          sudo rm -rf /usr/local/lib/android/sdk/ndk || true
           sudo rm -rf /opt/ghc || true
           sudo rm -rf /opt/hostedtoolcache/CodeQL || true
           sudo rm -rf "$AGENT_TOOLSDIRECTORY/Ruby" || true
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY/PyPy" || true
+          sudo rm -rf /usr/share/swift || true
           sudo docker image prune --all --force || true
           echo "After:"
           df -h /
@@ -83,31 +87,29 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # SDK + tools first. The default setup-android action accepts
-      # all the regular licenses; we let it pick the SDK Tools version
-      # (specifying packages explicitly was hitting an SDK-Preview
-      # license-acceptance gate on the runner).
+      # SDK + tools. We don't ask for NDK here — the ubuntu-22.04
+      # runner already ships one at $ANDROID_NDK_LATEST_HOME (currently
+      # NDK 27.x on the actions-runner-images images), which is what
+      # we re-export to NDK_HOME below. Skipping a separate NDK
+      # download saves ~3 GB and bypasses the SDK-Preview-license
+      # acceptance gate that bit run #1.
       - name: Install Android SDK
         uses: android-actions/setup-android@v3
         with:
           packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
           accept-android-sdk-licenses: true
 
-      # NDK installed separately so the Tauri Mobile build can find the
-      # right toolchain without us fighting setup-android's package
-      # gating. nttld/setup-ndk@v1 sets NDK_HOME automatically.
-      - name: Install NDK
-        uses: nttld/setup-ndk@v1
-        id: setup-ndk
-        with:
-          ndk-version: r26d
-          add-to-path: false
-
-      - name: Expose NDK_HOME
+      - name: Expose NDK paths to subsequent steps
         run: |
-          echo "NDK_HOME=${{ steps.setup-ndk.outputs.ndk-path }}" >> $GITHUB_ENV
-          echo "ANDROID_NDK_HOME=${{ steps.setup-ndk.outputs.ndk-path }}" >> $GITHUB_ENV
-          echo "ANDROID_NDK_ROOT=${{ steps.setup-ndk.outputs.ndk-path }}" >> $GITHUB_ENV
+          if [ -z "$ANDROID_NDK_LATEST_HOME" ]; then
+            # Defensive: some runner image versions name it differently.
+            # Pick the highest-numbered NDK directory under the SDK root.
+            export ANDROID_NDK_LATEST_HOME=$(ls -d "$ANDROID_HOME"/ndk/*/ 2>/dev/null | sort -V | tail -1 | sed 's:/$::')
+          fi
+          echo "Picked NDK: $ANDROID_NDK_LATEST_HOME"
+          echo "NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> $GITHUB_ENV
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> $GITHUB_ENV
+          echo "ANDROID_NDK_ROOT=$ANDROID_NDK_LATEST_HOME" >> $GITHUB_ENV
 
       - uses: dtolnay/rust-toolchain@stable
         with:
