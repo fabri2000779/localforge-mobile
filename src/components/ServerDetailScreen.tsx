@@ -16,7 +16,7 @@
  *
  * Console tail and file manager are explicitly out of scope for v0.1.x.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
   Hash,
@@ -52,15 +52,27 @@ interface CmdResultEvent {
   error?: string;
 }
 
+/** Hard cap on retained log lines. Mobile WebViews choke on tens of
+ *  thousands of DOM nodes — 500 is comfortable, plenty for an "is my
+ *  server happy" glance. Older lines drop off the top. */
+const LOG_BUFFER_CAP = 500;
+
+interface LogLine {
+  ts: number;
+  line: string;
+}
+
 export function ServerDetailScreen({ server, onBack }: Props) {
   const [pending, setPending] = useState<Action | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
+  const [logs, setLogs] = useState<LogLine[]>([]);
   // The request_id we're currently awaiting a cmd_result for, so we
   // can filter incoming events. Multiple actions in flight aren't
   // supported (the buttons disable each other) but we still match on
   // id for correctness — a stale response after a quick re-tap would
   // otherwise overwrite the toast.
   const awaitingId = useRef<string | null>(null);
+  const logViewportRef = useRef<HTMLDivElement | null>(null);
 
   // Toast self-dismiss after 3s. Cleared on unmount + every new toast.
   useEffect(() => {
@@ -91,6 +103,63 @@ export function ServerDetailScreen({ server, onBack }: Props) {
       unsub?.();
     };
   }, []);
+
+  // Console tail. Send `server.attach` to the owner so it starts
+  // forwarding console output for THIS server through the relay;
+  // listen for the resulting `server-log` events (RelayLogBridge
+  // re-emits relay console_line frames as local server-log events
+  // on every sub-user so the same xterm wiring works unchanged on
+  // mobile too). Detach on unmount so the relay quiets back down.
+  useEffect(() => {
+    let unsub: UnlistenFn | undefined;
+    listen<{ server_id: string; line: string; ts: number }>(
+      'server-log',
+      (event) => {
+        if (event.payload?.server_id !== server.id) return;
+        setLogs((prev) => {
+          const next = prev.length >= LOG_BUFFER_CAP
+            ? prev.slice(prev.length - LOG_BUFFER_CAP + 1)
+            : prev.slice();
+          next.push({ ts: event.payload.ts, line: event.payload.line });
+          return next;
+        });
+      },
+    ).then((u) => {
+      unsub = u;
+    });
+
+    // Fire attach. Best-effort — if the relay isn't connected yet
+    // the user sees "(waiting for connection)" until they reconnect.
+    void cloudRelaySendCmd({
+      type: 'cmd',
+      cmd: 'server.attach',
+      request_id: crypto.randomUUID(),
+      target: server.id,
+    });
+
+    return () => {
+      unsub?.();
+      void cloudRelaySendCmd({
+        type: 'cmd',
+        cmd: 'server.detach',
+        request_id: crypto.randomUUID(),
+        target: server.id,
+      });
+    };
+  }, [server.id]);
+
+  // Auto-scroll to bottom whenever a new line lands. useLayoutEffect
+  // so the scroll happens in the same paint as the DOM update — no
+  // visible flicker. The user can still scroll up manually; we only
+  // pin to bottom when they're already near it.
+  useLayoutEffect(() => {
+    const el = logViewportRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (distanceFromBottom < 60) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [logs]);
 
   async function fire(action: Action) {
     if (pending) return;
@@ -192,17 +261,26 @@ export function ServerDetailScreen({ server, onBack }: Props) {
         </div>
       </section>
 
-      <section className="card card-coming-soon">
-        <Terminal size={18} color="#60a5fa" />
-        <div>
-          <h2>Console tail arrives in v0.2</h2>
-          <p>
-            Live log streaming, command input and file manager will land
-            once the owner-side state.snapshot + server.log.subscribe
-            handlers are wired on the desktop. The infrastructure (relay
-            connection, event subscriber) is already in place — only
-            the wire contract is pending.
-          </p>
+      <section className="card console-card">
+        <div className="console-header">
+          <Terminal size={14} />
+          <span>Console</span>
+          <span className="console-count">{logs.length}/{LOG_BUFFER_CAP}</span>
+        </div>
+        <div ref={logViewportRef} className="console-viewport" role="log">
+          {logs.length === 0 ? (
+            <div className="console-empty">
+              Waiting for output. The owner forwards console lines once
+              the server actually emits any — start the server (or push a
+              command) to see live output here.
+            </div>
+          ) : (
+            logs.map((l, i) => (
+              <div key={i} className="console-line">
+                {l.line}
+              </div>
+            ))
+          )}
         </div>
       </section>
 

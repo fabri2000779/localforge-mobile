@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import {
   cloudRelayStart,
+  cloudRelaySendCmd,
   cloudRelayStop,
   cloudServersList,
   isCloudError,
@@ -29,6 +30,17 @@ import {
   type Me,
   type ServerSummary,
 } from '../lib/cloud';
+
+/** Per-server live status reported by the owner via state.snapshot
+ *  or server.state_changed. Mirrors the desktop's ServerStatus enum. */
+export type ServerStatus =
+  | 'running'
+  | 'stopped'
+  | 'starting'
+  | 'stopping'
+  | 'crashed'
+  | 'installing'
+  | 'unknown';
 
 interface Props {
   me: Me;
@@ -54,6 +66,11 @@ export function ServerListScreen({ me, onBack, onOpenServer }: Props) {
    *  badge in the header so the user knows whether the list reflects
    *  the owner's current state or only the cached snapshot. */
   const [relayStatus, setRelayStatus] = useState<'idle' | 'connecting' | 'connected' | 'disconnected'>('idle');
+  /** Per-server live status keyed by server id. Empty until the owner
+   *  responds to `state.snapshot` (sent on connect + on every manual
+   *  refresh). Subsequent server.state_changed events patch single
+   *  entries. */
+  const [statuses, setStatuses] = useState<Map<string, ServerStatus>>(new Map());
 
   // Mount the relay connection for paid users — Tauri keeps it open
   // across screen navigations until we stop it, but we tear it down
@@ -68,17 +85,45 @@ export function ServerListScreen({ me, onBack, onOpenServer }: Props) {
     let unsubDisconnected: (() => void) | undefined;
     let unsubEvent: (() => void) | undefined;
     setRelayStatus('connecting');
-    subscribeRelayConnected(() => setRelayStatus('connected')).then((u) => {
+
+    // On connect: ask the owner for a full snapshot of every server's
+    // current container status. The owner's RelayCommandExecutor
+    // catches state.snapshot and replies with kind: state_snapshot.
+    subscribeRelayConnected(() => {
+      setRelayStatus('connected');
+      void cloudRelaySendCmd({
+        type: 'cmd',
+        cmd: 'state.snapshot',
+        request_id: crypto.randomUUID(),
+      });
+    }).then((u) => {
       unsubConnected = u;
     });
     subscribeRelayDisconnected(() => setRelayStatus('disconnected')).then((u) => {
       unsubDisconnected = u;
     });
     subscribeRelayEvent((msg) => {
-      // Placeholder for the next milestone — once the owner emits
-      // `kind: 'state_snapshot'` / `kind: 'server.state_changed'`,
-      // we'll update per-row badges here. For now we just log.
-      console.debug('[relay] event', msg);
+      // Owner snapshot — replace the whole map. Drop entries the
+      // owner didn't include (server was deleted owner-side).
+      if (msg.kind === 'state_snapshot' && Array.isArray(msg.servers)) {
+        const next = new Map<string, ServerStatus>();
+        for (const s of msg.servers as Array<{ id: string; status: ServerStatus }>) {
+          if (s?.id) next.set(s.id, s.status ?? 'unknown');
+        }
+        setStatuses(next);
+        return;
+      }
+      // Patch a single row. server.state_changed fires every time the
+      // owner-side serverStore observes a status transition.
+      if (msg.kind === 'server.state_changed' && typeof msg.target === 'string') {
+        const target = msg.target;
+        const status = (msg.status ?? 'unknown') as ServerStatus;
+        setStatuses((prev) => {
+          const next = new Map(prev);
+          next.set(target, status);
+          return next;
+        });
+      }
     }).then((u) => {
       unsubEvent = u;
     });
@@ -99,6 +144,16 @@ export function ServerListScreen({ me, onBack, onOpenServer }: Props) {
     try {
       const servers = await cloudServersList();
       setState({ kind: 'ready', servers });
+      // Piggy-back: also ask the relay for a fresh state snapshot if
+      // it's connected. Without this, refresh would update the list
+      // but leave stale badges from the connect-time snapshot.
+      if (relayStatus === 'connected') {
+        void cloudRelaySendCmd({
+          type: 'cmd',
+          cmd: 'state.snapshot',
+          request_id: crypto.randomUUID(),
+        });
+      }
     } catch (e) {
       // 402 → paid plan required. Any other error → show inline.
       if (isCloudError(e) && e.status === 402) {
@@ -166,7 +221,12 @@ export function ServerListScreen({ me, onBack, onOpenServer }: Props) {
         ) : (
           <ul className="server-list">
             {state.servers.map((s) => (
-              <ServerRow key={s.id} server={s} onOpen={() => onOpenServer(s)} />
+              <ServerRow
+                key={s.id}
+                server={s}
+                status={statuses.get(s.id)}
+                onOpen={() => onOpenServer(s)}
+              />
             ))}
           </ul>
         ))}
@@ -195,9 +255,11 @@ function RelayBadge({
 
 function ServerRow({
   server,
+  status,
   onOpen,
 }: {
   server: ServerSummary;
+  status: ServerStatus | undefined;
   onOpen: () => void;
 }) {
   return (
@@ -207,7 +269,10 @@ function ServerRow({
           <ServerCog size={18} />
         </div>
         <div className="server-row-body">
-          <div className="server-row-name">{server.name}</div>
+          <div className="server-row-name-row">
+            <div className="server-row-name">{server.name}</div>
+            {status && <StatusBadge status={status} />}
+          </div>
           <div className="server-row-meta">
             Last synced {relativeTime(server.updatedAt)}
           </div>
@@ -216,6 +281,45 @@ function ServerRow({
       </button>
     </li>
   );
+}
+
+function StatusBadge({ status }: { status: ServerStatus }) {
+  // Color buckets: green = healthy, amber = transitioning, red = bad,
+  // muted = unknown / installing. Labels are 1–2 words to fit on a
+  // 360 px width device beside the server name without truncation.
+  const variant = statusVariant(status);
+  return (
+    <span className={`status-badge status-badge--${variant}`}>
+      <span className="status-dot" aria-hidden />
+      {statusLabel(status)}
+    </span>
+  );
+}
+
+function statusVariant(s: ServerStatus): 'ok' | 'busy' | 'bad' | 'muted' {
+  switch (s) {
+    case 'running': return 'ok';
+    case 'starting':
+    case 'stopping': return 'busy';
+    case 'crashed': return 'bad';
+    case 'stopped':
+    case 'installing':
+    case 'unknown':
+    default:
+      return 'muted';
+  }
+}
+
+function statusLabel(s: ServerStatus): string {
+  switch (s) {
+    case 'running': return 'Running';
+    case 'stopped': return 'Stopped';
+    case 'starting': return 'Starting';
+    case 'stopping': return 'Stopping';
+    case 'crashed': return 'Crashed';
+    case 'installing': return 'Installing';
+    default: return '—';
+  }
 }
 
 function ListLoading() {
