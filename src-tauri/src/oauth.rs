@@ -33,11 +33,24 @@ use localforge_cloud_client::auth as auth_client;
 #[cfg(any(target_os = "android", target_os = "ios"))]
 use tauri::Emitter;
 
-/// Same value the desktop uses. The cloud's safeRedirect allow-list
-/// accepts `localforge:` regardless of host, so both clients can hit
-/// the same path — whichever app is installed handles it; if both
-/// are installed the OS surfaces a picker, which is the right UX.
-const REDIRECT_URI: &str = "localforge://auth/callback";
+/// Mobile uses an HTTPS Universal Link (iOS) / App Link (Android)
+/// rather than the desktop's `localforge://` custom scheme. The
+/// tauri-plugin-deep-link 2.x mobile config only accepts host+path
+/// shapes — custom schemes on mobile would require hand-editing the
+/// generated AndroidManifest.xml / Info.plist each `init`, which CI
+/// regenerates from scratch.
+///
+/// Cloud `safeRedirect` accepts any URL under `APP_ORIGIN`, so this
+/// path needs no allowlist change — it's already covered.
+///
+/// IMPORTANT: until `.well-known/apple-app-site-association`
+/// (iOS) + `.well-known/assetlinks.json` (Android, with the release
+/// keystore's SHA-256) are published on localforge.gg, the OS won't
+/// automatically route the URL back to the installed app. The OAuth
+/// flow degrades to "user signs in, lands on /auth/mobile-callback
+/// in the browser, manually opens LocalForge". Apple Developer +
+/// Android keystore are tracked in the README v0.3 roadmap.
+const REDIRECT_URI: &str = "https://localforge.gg/auth/mobile-callback";
 
 #[tauri::command]
 pub async fn cloud_oauth_start(app: AppHandle, provider: String) -> Result<(), String> {
@@ -62,11 +75,19 @@ pub async fn cloud_oauth_start(app: AppHandle, provider: String) -> Result<(), S
 /// by path. Silent on anything we don't recognise so future schemes
 /// (debug, in-app deep links) don't trigger an error event.
 pub async fn handle_deep_link(app: AppHandle, url: String) {
-    if url.starts_with("localforge://auth/callback") {
+    // We accept both the HTTPS Universal-Link shape (the production
+    // path once AASA/assetlinks land) and the legacy localforge://
+    // custom-scheme shape (in case anything still emits it; the cloud
+    // currently only uses the URL we send in redirect_to).
+    if url.starts_with("https://localforge.gg/auth/mobile-callback")
+        || url.starts_with("localforge://auth/callback")
+    {
         handle_auth_callback(app, url).await;
         return;
     }
-    if url.starts_with("localforge://invite") {
+    if url.starts_with("https://localforge.gg/invite")
+        || url.starts_with("localforge://invite")
+    {
         handle_invite(app, url).await;
         return;
     }
