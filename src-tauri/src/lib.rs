@@ -13,6 +13,15 @@ pub fn run() {
         .with_target(false)
         .init();
 
+    // Tell the shared cloud-client which product+version to advertise
+    // in the User-Agent. Mirrors what the desktop does in its main.rs.
+    localforge_cloud_client::init_user_agent(format!(
+        "LocalForgeMobile/{} ({} {})",
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+    ));
+
     tauri::Builder::default()
         .plugin(tauri_plugin_deep_link::init())
         .invoke_handler(tauri::generate_handler![ping])
