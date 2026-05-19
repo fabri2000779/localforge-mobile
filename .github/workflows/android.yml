@@ -62,14 +62,31 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Install Android SDK + NDK
+      # SDK + tools first. The default setup-android action accepts
+      # all the regular licenses; we let it pick the SDK Tools version
+      # (specifying packages explicitly was hitting an SDK-Preview
+      # license-acceptance gate on the runner).
+      - name: Install Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: |
-            platforms;android-35
-            platform-tools
-            build-tools;35.0.0
-            ndk;26.3.11579264
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+          accept-android-sdk-licenses: true
+
+      # NDK installed separately so the Tauri Mobile build can find the
+      # right toolchain without us fighting setup-android's package
+      # gating. nttld/setup-ndk@v1 sets NDK_HOME automatically.
+      - name: Install NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r26d
+          add-to-path: false
+
+      - name: Expose NDK_HOME
+        run: |
+          echo "NDK_HOME=${{ steps.setup-ndk.outputs.ndk-path }}" >> $GITHUB_ENV
+          echo "ANDROID_NDK_HOME=${{ steps.setup-ndk.outputs.ndk-path }}" >> $GITHUB_ENV
+          echo "ANDROID_NDK_ROOT=${{ steps.setup-ndk.outputs.ndk-path }}" >> $GITHUB_ENV
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -85,7 +102,7 @@ jobs:
       - name: Generate Tauri Android project
         run: npx --no-install tauri android init --ci
         env:
-          NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
+          NDK_HOME: ${{ env.NDK_HOME }}
 
       # ─── Signing (release only) ──────────────────────────────────
       # Only runs when the build is for a tag. Debug builds use the
@@ -118,13 +135,13 @@ jobs:
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         run: npx --no-install tauri android build --debug --apk
         env:
-          NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
+          NDK_HOME: ${{ env.NDK_HOME }}
 
       - name: Build release APK + AAB (tag)
         if: startsWith(github.ref, 'refs/tags/v')
         run: npx --no-install tauri android build --apk --aab
         env:
-          NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
+          NDK_HOME: ${{ env.NDK_HOME }}
 
       # ─── Output ──────────────────────────────────────────────────
       - name: Upload debug APK
