@@ -11,6 +11,7 @@
  * org switching / server lists we'll lift state into a store.
  */
 import { invoke } from '@tauri-apps/api/core';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 
 // ---------------------------------------------------------------------------
 // Wire types — match the cloud-client Rust definitions byte-for-byte.
@@ -90,4 +91,39 @@ export function cloudLogout(): Promise<void> {
 
 export function cloudRequestPasswordReset(email: string): Promise<void> {
   return invoke('cloud_request_password_reset', { email });
+}
+
+// ---------------------------------------------------------------------------
+// OAuth — fire-and-forget. The actual token arrives via the
+// `cloud://signed-in` event AFTER the user completes the browser flow;
+// callers subscribe with `onSignedIn()` below before invoking start.
+// ---------------------------------------------------------------------------
+
+export type OAuthProvider = 'google' | 'discord' | 'github';
+
+export function cloudOAuthStart(provider: OAuthProvider): Promise<void> {
+  return invoke('cloud_oauth_start', { provider });
+}
+
+/** Subscribe to the deep-link OAuth completion event. Resolves to an
+ *  unlisten fn the caller should invoke in cleanup. Named with the
+ *  `subscribe…` prefix so it doesn't collide with component prop
+ *  names like `onSignedIn`. */
+export function subscribeSignedIn(handler: (me: Me) => void): Promise<UnlistenFn> {
+  return listen<Me>('cloud://signed-in', (event) => {
+    handler(event.payload);
+  });
+}
+
+/** Subscribe to OAuth failures (no token in callback, /me failed,
+ *  etc). Used by the LoginScreen to flip out of the "waiting for
+ *  browser" state and show the error inline. */
+export interface OAuthErrorEvent {
+  code: string;
+  message: string | null;
+}
+export function subscribeAuthError(handler: (e: OAuthErrorEvent) => void): Promise<UnlistenFn> {
+  return listen<OAuthErrorEvent>('cloud://auth-error', (event) => {
+    handler(event.payload);
+  });
 }

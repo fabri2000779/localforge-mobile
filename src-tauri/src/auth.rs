@@ -74,6 +74,20 @@ pub fn load_token(app: &tauri::AppHandle) -> Option<String> {
     Some(from_disk)
 }
 
+/// Persist the JWT to disk + warm the cache. Called from the
+/// `cloud_login` / `cloud_signup` paths AND from the OAuth deep-link
+/// handler in `oauth::handle_auth_callback`, hence pub(crate).
+///
+/// Mobile-gated because the only crate-external caller is the
+/// deep-link handler, which itself is gated to iOS/Android. On a
+/// desktop preview build this would otherwise warn as dead code —
+/// every command path that needs to save a token from outside this
+/// module is mobile-only.
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub(crate) fn save_session_token(app: &tauri::AppHandle, token: &str) -> Result<(), String> {
+    save_token(app, token)
+}
+
 fn save_token(app: &tauri::AppHandle, token: &str) -> Result<(), String> {
     let path = token_path(app)?;
     std::fs::write(&path, token).map_err(|e| format!("write token: {e}"))?;

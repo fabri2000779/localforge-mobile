@@ -4,6 +4,7 @@
 //! source of truth for the Tauri builder configuration.
 
 mod auth;
+mod oauth;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -26,6 +27,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             ping,
             auth::cloud_me,
@@ -33,25 +35,35 @@ pub fn run() {
             auth::cloud_signup,
             auth::cloud_logout,
             auth::cloud_request_password_reset,
+            oauth::cloud_oauth_start,
         ])
         .setup(|app| {
             tracing::info!(version = env!("CARGO_PKG_VERSION"), "LocalForge mobile starting");
 
-            // Deep-link bootstrap. The OAuth callback flow will route
-            // through here in a follow-up commit, once the cloud's
-            // /v1/auth/<provider>/start endpoint accepts ?mobile=1
-            // and bounces back via a registered scheme. For now this
-            // just logs whatever arrives so we can confirm the OS is
-            // delivering URLs to us.
+            // Wire the deep-link receiver. The iOS/Android OS hands us
+            // any URL with our registered scheme (`localforge://…`),
+            // which is how the OAuth callback flow gets the JWT back
+            // into the app. Each URL goes through `oauth::handle_deep_link`
+            // which routes by path — auth/callback today, invite
+            // tomorrow, anything else logged and ignored.
             #[cfg(any(target_os = "android", target_os = "ios"))]
             {
                 use tauri_plugin_deep_link::DeepLinkExt;
-                app.deep_link().on_open_url(|event| {
-                    tracing::info!(urls = ?event.urls(), "deep-link received");
+                let handle = app.handle().clone();
+                app.deep_link().on_open_url(move |event| {
+                    let urls = event.urls();
+                    tracing::info!(?urls, "deep-link received");
+                    for url in urls {
+                        let h = handle.clone();
+                        let s = url.to_string();
+                        tauri::async_runtime::spawn(async move {
+                            oauth::handle_deep_link(h, s).await;
+                        });
+                    }
                 });
             }
 
-            let _ = app; // silence unused on desktop builds without cfg above
+            let _ = app; // silence unused on non-mobile builds
             Ok(())
         })
         .run(tauri::generate_context!())

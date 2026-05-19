@@ -35,10 +35,8 @@
   "plugins": {
     "deep-link": {
       "mobile": [
-        {
-          "host": "localforge.gg",
-          "pathPrefix": ["/auth/mobile-callback"]
-        }
+        { "host": "auth", "scheme": "localforge" },
+        { "host": "invite", "scheme": "localforge" }
       ],
       "desktop": {
         "schemes": ["localforge"]

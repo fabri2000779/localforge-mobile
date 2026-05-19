@@ -8,14 +8,19 @@
  * /v1/auth/<provider>/start?mobile=1 + the mobile-callback bouncer
  * land — that's the next mobile + cloud co-commit.
  */
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { Mail, Lock, AlertOctagon, ArrowLeft } from 'lucide-react';
 import {
   cloudLogin,
   cloudSignup,
   cloudRequestPasswordReset,
+  cloudOAuthStart,
   isCloudError,
+  subscribeAuthError,
+  subscribeSignedIn,
   type Me,
+  type OAuthErrorEvent,
+  type OAuthProvider,
 } from '../lib/cloud';
 
 type Mode = 'signin' | 'signup' | 'forgot';
@@ -32,6 +37,56 @@ export function LoginScreen({ onSignedIn }: Props) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [resetSent, setResetSent] = useState(false);
+  // True while we're waiting for the OAuth deep-link to come back from
+  // the system browser. UX-wise we lock the whole card so the user
+  // doesn't kick off three OAuth flows in parallel.
+  const [oauthPending, setOauthPending] = useState<OAuthProvider | null>(null);
+
+  // Subscribe to the deep-link events the Rust side emits when the
+  // OAuth callback lands. Both listeners are torn down on unmount —
+  // Tauri's `listen` resolves with an unlisten fn we MUST call back
+  // or the handler leaks across re-renders + screen changes.
+  useEffect(() => {
+    let unsubSignedIn: (() => void) | undefined;
+    let unsubError: (() => void) | undefined;
+    subscribeSignedIn((me) => {
+      setOauthPending(null);
+      setError(null);
+      onSignedIn(me);
+    }).then((u) => {
+      unsubSignedIn = u;
+    });
+    subscribeAuthError((e) => {
+      setOauthPending(null);
+      setError(prettyAuthError(e));
+    }).then((u) => {
+      unsubError = u;
+    });
+    return () => {
+      unsubSignedIn?.();
+      unsubError?.();
+    };
+    // `onSignedIn` is the parent's callback prop — re-subscribing on
+    // each render would tear down + rebuild the Tauri event listener
+    // every keystroke. We snapshot at mount and rely on parents
+    // holding stable refs (App.tsx does).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function startOAuth(provider: OAuthProvider) {
+    setError(null);
+    setOauthPending(provider);
+    try {
+      await cloudOAuthStart(provider);
+      // If the OS for some reason refuses to open the browser, the
+      // deep-link event will never fire. We let the user retry by
+      // clicking again — there's no good timeout to pick here, and
+      // a "stuck" pending state at least makes the failure visible.
+    } catch (e) {
+      setOauthPending(null);
+      setError(e instanceof Error ? e.message : 'Could not open the browser.');
+    }
+  }
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -172,13 +227,30 @@ export function LoginScreen({ onSignedIn }: Props) {
           </div>
 
           <div className="oauth-row">
-            <OAuthButton provider="google" disabled />
-            <OAuthButton provider="discord" disabled />
-            <OAuthButton provider="github" disabled />
+            <OAuthButton
+              provider="google"
+              pending={oauthPending === 'google'}
+              disabled={submitting || (oauthPending !== null && oauthPending !== 'google')}
+              onClick={() => startOAuth('google')}
+            />
+            <OAuthButton
+              provider="discord"
+              pending={oauthPending === 'discord'}
+              disabled={submitting || (oauthPending !== null && oauthPending !== 'discord')}
+              onClick={() => startOAuth('discord')}
+            />
+            <OAuthButton
+              provider="github"
+              pending={oauthPending === 'github'}
+              disabled={submitting || (oauthPending !== null && oauthPending !== 'github')}
+              onClick={() => startOAuth('github')}
+            />
           </div>
-          <p className="auth-coming-soon">
-            OAuth sign-in is coming in the next mobile build.
-          </p>
+          {oauthPending && (
+            <p className="auth-coming-soon">
+              Finish signing in in your browser — we'll bounce you back here.
+            </p>
+          )}
         </>
       )}
 
@@ -290,10 +362,14 @@ function Field({
 
 function OAuthButton({
   provider,
+  pending,
   disabled,
+  onClick,
 }: {
   provider: 'google' | 'discord' | 'github';
+  pending?: boolean;
   disabled?: boolean;
+  onClick?: () => void;
 }) {
   const label = provider[0]!.toUpperCase() + provider.slice(1);
   return (
@@ -301,10 +377,12 @@ function OAuthButton({
       type="button"
       className="oauth-btn"
       disabled={disabled}
-      title={disabled ? 'Coming soon' : `Sign in with ${label}`}
+      onClick={onClick}
+      title={`Sign in with ${label}`}
+      aria-busy={pending || undefined}
     >
       <span className={`oauth-icon oauth-icon--${provider}`} aria-hidden />
-      <span>{label}</span>
+      <span>{pending ? '…' : label}</span>
     </button>
   );
 }
@@ -337,6 +415,19 @@ function ResetSentMessage({
 }
 
 // ---------------------------------------------------------------------------
+
+/** Map the `cloud://auth-error` event payload (emitted by the Rust
+ *  oauth handler) to a sentence the user can act on. */
+function prettyAuthError(e: OAuthErrorEvent): string {
+  switch (e.code) {
+    case 'no_token':
+      return "The provider didn't return a token. Try again.";
+    case 'token_store':
+      return "We couldn't save your session locally. Free up some storage and try again.";
+    default:
+      return e.message ?? `OAuth failed (${e.code}).`;
+  }
+}
 
 function prettyError(e: unknown): string {
   if (!isCloudError(e)) {

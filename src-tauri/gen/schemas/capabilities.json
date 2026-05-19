@@ -1,0 +1,1 @@
+{"default":{"identifier":"default","description":"Default capability set shared by every window. Tauri 2 requires every command we expose to be allow-listed here.","local":true,"windows":["main"],"permissions":["core:default","deep-link:default","opener:default","opener:allow-open-url"]}}
