@@ -62,11 +62,14 @@ jobs:
           IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
           IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
         run: |
-          # Cert
-          echo "$IOS_CERTIFICATE_BASE64" | base64 -D > /tmp/cert.p12
+          # Strip CR/LF/whitespace before decode — `gh secret set`
+          # piped from PowerShell on Windows injects a trailing CRLF
+          # that macOS's strict base64 chokes on. tr-then-decode is
+          # the robust path regardless of how the secret got uploaded.
+          printf '%s' "$IOS_CERTIFICATE_BASE64" | tr -d '\r\n\t ' | base64 -D > /tmp/cert.p12
           # Provisioning profile
           mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
-          echo "$IOS_PROVISIONING_PROFILE_BASE64" | base64 -D \
+          printf '%s' "$IOS_PROVISIONING_PROFILE_BASE64" | tr -d '\r\n\t ' | base64 -D \
             > "$HOME/Library/MobileDevice/Provisioning Profiles/lf-mobile.mobileprovision"
           # Custom keychain so we don't mutate the runner's default
           security create-keychain -p "" build.keychain
