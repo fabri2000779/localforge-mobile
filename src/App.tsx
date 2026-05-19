@@ -1,19 +1,26 @@
 /**
  * Root of the LocalForge mobile companion.
  *
- * State machine: loading → signed-out (login) → signed-in.
- * Once signed in, a simple route enum selects between Home and the
- * server list. We'll graduate to react-router once we have more than
- * 3 screens; today this is cheaper and zero-dep.
+ * State machine:
+ *   loading → signed-out (login) → signed-in { route }
+ *   route = 'home' | 'servers' | 'server'
+ *
+ * react-router is overkill at three screens; the cost reappraisal lives
+ * in src/components/README when we approach it (org switcher, settings,
+ * audit log etc.).
  */
 import { useEffect, useState } from 'react';
 import { LoginScreen } from './components/LoginScreen';
 import { HomeScreen } from './components/HomeScreen';
 import { ServerListScreen } from './components/ServerListScreen';
-import { cloudMe, type Me } from './lib/cloud';
+import { ServerDetailScreen } from './components/ServerDetailScreen';
+import { cloudMe, type Me, type ServerSummary } from './lib/cloud';
 import './App.css';
 
-type Route = 'home' | 'servers';
+type Route =
+  | { kind: 'home' }
+  | { kind: 'servers' }
+  | { kind: 'server'; server: ServerSummary };
 
 type State =
   | { kind: 'loading' }
@@ -28,7 +35,7 @@ function App() {
       .then((me) => {
         setState(
           me
-            ? { kind: 'signed-in', me, route: 'home' }
+            ? { kind: 'signed-in', me, route: { kind: 'home' } }
             : { kind: 'signed-out' },
         );
       })
@@ -55,7 +62,11 @@ function App() {
       <div className="app-shell">
         <LoginScreen
           onSignedIn={(me) =>
-            setState({ kind: 'signed-in', me, route: 'home' })
+            setState({
+              kind: 'signed-in',
+              me,
+              route: { kind: 'home' },
+            })
           }
         />
       </div>
@@ -64,22 +75,41 @@ function App() {
 
   return (
     <div className="app-shell">
-      {state.route === 'home' ? (
-        <HomeScreen
-          me={state.me}
-          onSignedOut={() => setState({ kind: 'signed-out' })}
-          onOpenServers={() =>
-            setState({ ...state, route: 'servers' })
-          }
-        />
-      ) : (
-        <ServerListScreen
-          me={state.me}
-          onBack={() => setState({ ...state, route: 'home' })}
-        />
-      )}
+      {renderRoute(state)}
     </div>
   );
+
+  function renderRoute(s: Extract<State, { kind: 'signed-in' }>) {
+    switch (s.route.kind) {
+      case 'home':
+        return (
+          <HomeScreen
+            me={s.me}
+            onSignedOut={() => setState({ kind: 'signed-out' })}
+            onOpenServers={() =>
+              setState({ ...s, route: { kind: 'servers' } })
+            }
+          />
+        );
+      case 'servers':
+        return (
+          <ServerListScreen
+            me={s.me}
+            onBack={() => setState({ ...s, route: { kind: 'home' } })}
+            onOpenServer={(server) =>
+              setState({ ...s, route: { kind: 'server', server } })
+            }
+          />
+        );
+      case 'server':
+        return (
+          <ServerDetailScreen
+            server={s.route.server}
+            onBack={() => setState({ ...s, route: { kind: 'servers' } })}
+          />
+        );
+    }
+  }
 }
 
 export default App;

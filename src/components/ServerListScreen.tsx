@@ -33,6 +33,7 @@ import {
 interface Props {
   me: Me;
   onBack: () => void;
+  onOpenServer: (server: ServerSummary) => void;
 }
 
 type State =
@@ -41,7 +42,7 @@ type State =
   | { kind: 'error'; message: string }
   | { kind: 'ready'; servers: ServerSummary[] };
 
-export function ServerListScreen({ me, onBack }: Props) {
+export function ServerListScreen({ me, onBack, onOpenServer }: Props) {
   // Free-tier users get the paywall card without us even firing the
   // request — the cloud would 402 anyway, no need to round-trip.
   const isPaid = me.subscription.plan !== 'free';
@@ -165,7 +166,7 @@ export function ServerListScreen({ me, onBack }: Props) {
         ) : (
           <ul className="server-list">
             {state.servers.map((s) => (
-              <ServerRow key={s.id} server={s} />
+              <ServerRow key={s.id} server={s} onOpen={() => onOpenServer(s)} />
             ))}
           </ul>
         ))}
@@ -192,19 +193,27 @@ function RelayBadge({
   );
 }
 
-function ServerRow({ server }: { server: ServerSummary }) {
+function ServerRow({
+  server,
+  onOpen,
+}: {
+  server: ServerSummary;
+  onOpen: () => void;
+}) {
   return (
-    <li className="server-row">
-      <div className="server-row-icon">
-        <ServerCog size={18} />
-      </div>
-      <div className="server-row-body">
-        <div className="server-row-name">{server.name}</div>
-        <div className="server-row-meta">
-          Last synced {relativeTime(server.updatedAt)}
+    <li>
+      <button type="button" className="server-row" onClick={onOpen}>
+        <div className="server-row-icon">
+          <ServerCog size={18} />
         </div>
-      </div>
-      <ChevronRight size={16} className="server-row-chev" />
+        <div className="server-row-body">
+          <div className="server-row-name">{server.name}</div>
+          <div className="server-row-meta">
+            Last synced {relativeTime(server.updatedAt)}
+          </div>
+        </div>
+        <ChevronRight size={16} className="server-row-chev" />
+      </button>
     </li>
   );
 }
