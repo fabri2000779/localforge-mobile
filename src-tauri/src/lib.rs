@@ -5,6 +5,7 @@
 
 mod auth;
 mod oauth;
+mod relay;
 mod sync;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -29,6 +30,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
+        .manage(std::sync::Arc::new(relay::RelayState::default()))
         .invoke_handler(tauri::generate_handler![
             ping,
             auth::cloud_me,
@@ -38,6 +40,9 @@ pub fn run() {
             auth::cloud_request_password_reset,
             oauth::cloud_oauth_start,
             sync::cloud_servers_list,
+            relay::cloud_relay_start,
+            relay::cloud_relay_stop,
+            relay::cloud_relay_send_cmd,
         ])
         .setup(|app| {
             tracing::info!(version = env!("CARGO_PKG_VERSION"), "LocalForge mobile starting");

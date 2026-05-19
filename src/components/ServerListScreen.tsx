@@ -15,10 +15,17 @@ import {
   Lock,
   RefreshCw,
   ServerCog,
+  Wifi,
+  WifiOff,
 } from 'lucide-react';
 import {
+  cloudRelayStart,
+  cloudRelayStop,
   cloudServersList,
   isCloudError,
+  subscribeRelayConnected,
+  subscribeRelayDisconnected,
+  subscribeRelayEvent,
   type Me,
   type ServerSummary,
 } from '../lib/cloud';
@@ -42,6 +49,49 @@ export function ServerListScreen({ me, onBack }: Props) {
     isPaid ? { kind: 'loading' } : { kind: 'paywalled' },
   );
   const [refreshing, setRefreshing] = useState(false);
+  /** Live connection status to the relay WebSocket. Drives the small
+   *  badge in the header so the user knows whether the list reflects
+   *  the owner's current state or only the cached snapshot. */
+  const [relayStatus, setRelayStatus] = useState<'idle' | 'connecting' | 'connected' | 'disconnected'>('idle');
+
+  // Mount the relay connection for paid users — Tauri keeps it open
+  // across screen navigations until we stop it, but we tear it down
+  // on unmount so we don't keep a WS dangling when the user signs
+  // out + comes back. The infrastructure is ready for live state;
+  // the owner-side `state_snapshot` command handler that actually
+  // populates `relay-event` lands in a follow-up co-commit on the
+  // desktop crate.
+  useEffect(() => {
+    if (!isPaid) return;
+    let unsubConnected: (() => void) | undefined;
+    let unsubDisconnected: (() => void) | undefined;
+    let unsubEvent: (() => void) | undefined;
+    setRelayStatus('connecting');
+    subscribeRelayConnected(() => setRelayStatus('connected')).then((u) => {
+      unsubConnected = u;
+    });
+    subscribeRelayDisconnected(() => setRelayStatus('disconnected')).then((u) => {
+      unsubDisconnected = u;
+    });
+    subscribeRelayEvent((msg) => {
+      // Placeholder for the next milestone — once the owner emits
+      // `kind: 'state_snapshot'` / `kind: 'server.state_changed'`,
+      // we'll update per-row badges here. For now we just log.
+      console.debug('[relay] event', msg);
+    }).then((u) => {
+      unsubEvent = u;
+    });
+    cloudRelayStart().catch((e) => {
+      console.warn('relay start failed', e);
+      setRelayStatus('disconnected');
+    });
+    return () => {
+      unsubConnected?.();
+      unsubDisconnected?.();
+      unsubEvent?.();
+      void cloudRelayStop();
+    };
+  }, [isPaid]);
 
   async function load(showRefresh = false) {
     if (showRefresh) setRefreshing(true);
@@ -86,6 +136,7 @@ export function ServerListScreen({ me, onBack }: Props) {
         <div className="list-title">
           <div className="home-eyebrow">Cloud</div>
           <h1>Your servers</h1>
+          {isPaid && <RelayBadge status={relayStatus} />}
         </div>
         {state.kind === 'ready' && (
           <button
@@ -123,6 +174,23 @@ export function ServerListScreen({ me, onBack }: Props) {
 }
 
 // ---------------------------------------------------------------------------
+
+function RelayBadge({
+  status,
+}: {
+  status: 'idle' | 'connecting' | 'connected' | 'disconnected';
+}) {
+  if (status === 'idle') return null;
+  const isLive = status === 'connected';
+  const label =
+    status === 'connected' ? 'Live' : status === 'connecting' ? 'Connecting…' : 'Offline';
+  return (
+    <span className={`relay-badge ${isLive ? 'relay-badge--live' : ''}`}>
+      {isLive ? <Wifi size={11} /> : <WifiOff size={11} />}
+      {label}
+    </span>
+  );
+}
 
 function ServerRow({ server }: { server: ServerSummary }) {
   return (

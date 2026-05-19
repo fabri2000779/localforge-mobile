@@ -57,6 +57,14 @@ base64 = "0.22"
 # the mobile builds its own connection loop on top of these primitives
 # + the WS URL helper from `localforge_cloud_client::relay`.
 tokio-tungstenite = { version = "0.28", default-features = false, features = ["rustls-tls-webpki-roots", "connect"] }
+# Used by the relay's `SinkExt::send` / `StreamExt::next` extension
+# methods. Direct dep since tokio-tungstenite re-exports the trait
+# objects but not the trait-import path.
+futures-util = "0.3"
+# Backoff jitter — the reconnect loop wants ±20% randomness. The
+# cloud-client transitively brings rand in but Cargo's visibility
+# rules don't expose transitive deps, so we list it directly.
+rand = "0.9"
 
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

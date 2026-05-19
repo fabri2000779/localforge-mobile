@@ -586,3 +586,25 @@ input, textarea {
   from { transform: rotate(0); }
   to { transform: rotate(360deg); }
 }
+
+/* Relay connection badge — tiny pill in the list-screen header. */
+.relay-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: rgba(148, 163, 184, 0.1);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+.relay-badge--live {
+  background: rgba(34, 197, 94, 0.1);
+  border-color: rgba(34, 197, 94, 0.3);
+  color: #4ade80;
+}

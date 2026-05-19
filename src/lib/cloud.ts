@@ -110,6 +110,36 @@ export function cloudServersList(): Promise<ServerSummary[]> {
 }
 
 // ---------------------------------------------------------------------------
+// Relay — WebSocket bridge to the owner's desktop. The Rust side
+// keeps the connection alive across reconnects; React subscribes to
+// the named events below and sends commands via `cloudRelaySendCmd`.
+// ---------------------------------------------------------------------------
+
+export function cloudRelayStart(): Promise<void> {
+  return invoke('cloud_relay_start');
+}
+export function cloudRelayStop(): Promise<void> {
+  return invoke('cloud_relay_stop');
+}
+export function cloudRelaySendCmd(payload: Record<string, unknown>): Promise<void> {
+  return invoke('cloud_relay_send_cmd', { payload });
+}
+
+export function subscribeRelayConnected(handler: () => void): Promise<UnlistenFn> {
+  return listen('cloud://relay-connected', () => handler());
+}
+export function subscribeRelayDisconnected(handler: () => void): Promise<UnlistenFn> {
+  return listen('cloud://relay-disconnected', () => handler());
+}
+/** Owner-emitted event message. Body shape depends on `kind` — caller
+ *  is responsible for narrowing. */
+export function subscribeRelayEvent(
+  handler: (msg: Record<string, unknown>) => void,
+): Promise<UnlistenFn> {
+  return listen<Record<string, unknown>>('cloud://relay-event', (e) => handler(e.payload));
+}
+
+// ---------------------------------------------------------------------------
 // OAuth — fire-and-forget. The actual token arrives via the
 // `cloud://signed-in` event AFTER the user completes the browser flow;
 // callers subscribe with `onSignedIn()` below before invoking start.

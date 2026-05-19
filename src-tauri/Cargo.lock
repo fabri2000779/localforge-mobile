@@ -2236,9 +2236,11 @@ version = "0.0.1"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
+ "futures-util",
  "localforge-backend-remote",
  "localforge-cloud-client",
  "localforge-core",
+ "rand",
  "serde",
  "serde_json",
  "tauri",
