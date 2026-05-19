@@ -3,6 +3,8 @@
 //! into. The desktop `main.rs` calls the same function so we keep one
 //! source of truth for the Tauri builder configuration.
 
+mod auth;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tracing_subscriber::fmt()
@@ -24,15 +26,23 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_deep_link::init())
-        .invoke_handler(tauri::generate_handler![ping])
+        .invoke_handler(tauri::generate_handler![
+            ping,
+            auth::cloud_me,
+            auth::cloud_login,
+            auth::cloud_signup,
+            auth::cloud_logout,
+            auth::cloud_request_password_reset,
+        ])
         .setup(|app| {
             tracing::info!(version = env!("CARGO_PKG_VERSION"), "LocalForge mobile starting");
 
-            // Deep-link bootstrap. The OAuth callback from the cloud
-            // API redirects to `localforge://oauth-callback?token=…`.
-            // The single-instance plugin (not yet added) plus this
-            // event subscription is how we'll route those into the
-            // auth flow. Stub for now.
+            // Deep-link bootstrap. The OAuth callback flow will route
+            // through here in a follow-up commit, once the cloud's
+            // /v1/auth/<provider>/start endpoint accepts ?mobile=1
+            // and bounces back via a registered scheme. For now this
+            // just logs whatever arrives so we can confirm the OS is
+            // delivering URLs to us.
             #[cfg(any(target_os = "android", target_os = "ios"))]
             {
                 use tauri_plugin_deep_link::DeepLinkExt;
@@ -48,8 +58,8 @@ pub fn run() {
         .expect("failed to launch LocalForge mobile");
 }
 
-/// Trivial round-trip command — handy during scaffold to confirm the
-/// Rust ↔ JS bridge is wired before we wire the real cloud client.
+/// Trivial round-trip command kept around for smoke-testing the
+/// Rust ↔ JS bridge from the dev console while iterating on the UI.
 #[tauri::command]
 fn ping() -> &'static str {
     "pong"
