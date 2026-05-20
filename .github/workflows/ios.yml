@@ -104,14 +104,30 @@ jobs:
       - name: Build IPA (signed)
         if: env.IOS_CERTIFICATE_BASE64 != ''
         env:
-          # Tauri's native manual-signing inputs. Our secrets keep their
-          # historical *_BASE64 names; map them onto the names Tauri reads.
-          # Both base64 values are stored unwrapped (single line) so
-          # Tauri's strict decoder accepts them.
+          # Manual-signing inputs Tauri reads natively (it imports the
+          # cert, installs the profile, sets CODE_SIGN_STYLE=Manual + the
+          # profile specifier). Secrets keep their historical *_BASE64
+          # names; both base64 values are stored unwrapped so Tauri's
+          # strict decoder accepts them.
           IOS_CERTIFICATE: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
           IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
           IOS_MOBILE_PROVISION: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
-        run: npx --no-install tauri ios build --export-method app-store-connect
+          # ALSO give it the App Store Connect API key. With manual signing
+          # Tauri still runs the build phase with signing REQUIRED and
+          # always passes `-allowProvisioningUpdates`; offline (no key) that
+          # phase can't validate the profile and dies with "requires a
+          # provisioning profile". The key lets xcodebuild authenticate and
+          # resolve the (locally installed) profile. Same key as the IAP
+          # backend uses.
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER_ID }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_PRIVATE_KEY_BASE64: ${{ secrets.APPLE_API_PRIVATE_KEY_BASE64 }}
+        run: |
+          mkdir -p ~/.appstoreconnect/private_keys
+          printf '%s' "$APPLE_API_PRIVATE_KEY_BASE64" | tr -d '\r\n\t ' | base64 -D \
+            > ~/.appstoreconnect/private_keys/AuthKey_${APPLE_API_KEY}.p8
+          export APPLE_API_KEY_PATH="$HOME/.appstoreconnect/private_keys/AuthKey_${APPLE_API_KEY}.p8"
+          npx --no-install tauri ios build --export-method app-store-connect
 
       # Diagnostic: when the signed build fails on "requires a provisioning
       # profile", show what Tauri actually wrote to the project and whether
