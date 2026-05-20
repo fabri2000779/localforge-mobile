@@ -44,6 +44,11 @@ jobs:
     name: Build APK
     runs-on: ubuntu-22.04
     timeout-minutes: 45
+    # Surface the Play publishing secret at JOB level so the upload step's
+    # `if: env.… != ''` can see it. (Step-level env isn't reliably visible
+    # to a step's own if — same lesson baked into ios.yml.)
+    env:
+      GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
 
     steps:
       # Free ~20 GB of disk on the runner before we start. The default
@@ -239,3 +244,25 @@ jobs:
             src-tauri/gen/android/app/build/outputs/bundle/universalRelease/*.aab
           draft: true
           fail_on_unmatched_files: false
+
+      # Push the signed AAB straight to Play → internal testing track,
+      # mirroring the iOS TestFlight upload. Needs:
+      #   * GOOGLE_PLAY_SERVICE_ACCOUNT_JSON secret — the FULL service-
+      #     account JSON (can be the same account used for IAP verify),
+      #     granted "Release to testing tracks" on this app in Play
+      #     Console → Users & permissions.
+      #   * The app's FIRST release must already exist in the Play Console
+      #     (created by hand once); the API can't bootstrap a brand-new app.
+      #   * versionCode must strictly increase per upload — Tauri derives
+      #     it from the app version, so bump the version on each release tag.
+      # Without the secret this step is skipped (the GitHub Release asset
+      # above is still produced for manual upload).
+      - name: Upload AAB to Play (internal testing)
+        if: startsWith(github.ref, 'refs/tags/v') && env.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON != ''
+        uses: r0adkll/upload-google-play@v1.1.5
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.localforge.mobile
+          releaseFiles: src-tauri/gen/android/app/build/outputs/bundle/universalRelease/*.aab
+          track: internal
+          status: completed
