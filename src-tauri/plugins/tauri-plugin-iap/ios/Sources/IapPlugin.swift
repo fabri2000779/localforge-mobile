@@ -2,15 +2,15 @@ import Foundation
 import StoreKit
 import Tauri
 
-// Args mirror the camelCase payloads the Rust bridge sends. JSONDecoder
-// matches keys verbatim, so property names must equal the wire names.
-class GetProductsArgs: Decodable {
-  let productIds: [String]
-}
-
-class PurchaseArgs: Decodable {
-  let productId: String
-}
+// NOTE: we deliberately read command args with `invoke.getArgs()`
+// (a JSONSerialization-backed [String: Any]) rather than the generic
+// `invoke.parseArgs(SomeDecodable.self)`. The generic path makes the
+// Swift runtime instantiate the arg type's metadata by mangled name
+// (__swift_instantiateConcreteTypeFromMangledName); for a Codable type
+// defined in this Swift Package that metadata gets stripped in the
+// release build and the lookup TRAPS — crashing the app the instant the
+// plugin runs (Swift SR-11564). getArgs() avoids the Decodable path
+// entirely.
 
 /// StoreKit 2 bridge. Each command hops onto a `Task` because StoreKit's
 /// product/purchase APIs are async; the `Invoke` is resolved/rejected
@@ -23,7 +23,10 @@ class PurchaseArgs: Decodable {
 /// never trusted to assert "I paid".
 class IapPlugin: Plugin {
   @objc public func getProducts(_ invoke: Invoke) throws {
-    let args = try invoke.parseArgs(GetProductsArgs.self)
+    let args: JSObject = (try? invoke.getArgs()) ?? [:]
+    let productIds = (args["productIds"] as? [String])
+      ?? (args["productIds"] as? [Any])?.compactMap { $0 as? String }
+      ?? []
     guard #available(iOS 15.0, *) else {
       invoke.reject("In-App Purchase requires iOS 15 or later")
       return
@@ -33,7 +36,7 @@ class IapPlugin: Plugin {
         // StoreKit silently drops unknown ids, so the caller can pass the
         // union of iOS+Android ids and we return only the ones that exist
         // in App Store Connect.
-        let storeProducts = try await Product.products(for: args.productIds)
+        let storeProducts = try await Product.products(for: productIds)
         let payload: [[String: Any]] = storeProducts.map { product in
           [
             "id": product.id,
@@ -50,16 +53,20 @@ class IapPlugin: Plugin {
   }
 
   @objc public func purchase(_ invoke: Invoke) throws {
-    let args = try invoke.parseArgs(PurchaseArgs.self)
+    let args: JSObject = (try? invoke.getArgs()) ?? [:]
+    guard let productId = args["productId"] as? String else {
+      invoke.reject("missing productId")
+      return
+    }
     guard #available(iOS 15.0, *) else {
       invoke.reject("In-App Purchase requires iOS 15 or later")
       return
     }
     Task {
       do {
-        let products = try await Product.products(for: [args.productId])
+        let products = try await Product.products(for: [productId])
         guard let product = products.first else {
-          invoke.reject("product not found: \(args.productId)")
+          invoke.reject("product not found: \(productId)")
           return
         }
         let result = try await product.purchase()
