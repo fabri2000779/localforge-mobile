@@ -4,39 +4,40 @@ import Tauri
 
 // ─────────────────────────────────────────────────────────────────────────
 // Crash-avoidance notes (Swift SR-11564 —
-// __swift_instantiateConcreteTypeFromMangledName aborts on launch of a
-// plugin command in release). Three independent mitigations, all needed:
+// __swift_instantiateConcreteTypeFromMangledName aborts the instant a
+// plugin command runs in release).
 //
-// 1. THE TARGET IS BUILT -Onone (see ../Package.swift swiftSettings). The
-//    symbolicated v0.2.15 crash was `specialized IapPlugin.getProducts` →
-//    the OPTIMIZER emitted a lazy runtime type-metadata accessor that
-//    traps. -Onone makes the compiler emit direct metadata references.
-//    This is the primary fix; the rest are belt-and-suspenders.
+// The SYMBOLICATED v0.2.16 crash was:
+//     __swift_instantiateConcreteTypeFromMangledNameV2
+//     IapPlugin.getProducts(_:)            ← NOT "specialized" anymore
+// i.e. it still trapped even with the target forced to -Onone. So it is
+// NOT an optimizer/stripping problem. The real cause: getProducts touched
+// StoreKit 2 types (`Product`, `Transaction`) which are gated behind
+// `@available(iOS 15, *)`. Referenced from a method that is itself NOT
+// `@available`-annotated (it can't be — Tauri invokes it via @objc), the
+// compiler can't statically prove the type exists, so it emits a RUNTIME
+// metadata accessor (`instantiateConcreteTypeFromMangledName`) — and that
+// runtime demangle traps.
 //
-// 2. RESPONSES ARE CONCRETE Encodable STRUCTS, never `[String: Any]`
-//    dicts. Passing a dict takes Tauri's `resolve(JsonObject)` overload →
-//    `JsonValue.prepare()` whose `value as? [String: Any?]` cast forces
-//    `Dictionary<String, Optional<Any>>` metadata instantiation (same
-//    trap). The Encodable overload calls `JSONEncoder().encode` directly
-//    and never touches `prepare()`.
+// THE FIX: every StoreKit-touching line lives in `StoreKitBridge`, an
+// `@available(iOS 15.0, *)` enum. Inside an availability-annotated scope
+// the compiler KNOWS the types exist and emits DIRECT metadata references,
+// so no runtime instantiation, no trap. The @objc IapPlugin methods only
+// do the `#available` check + arg parsing, then delegate. They contain ZERO
+// StoreKit type references.
 //
-// 3. ARGS ARE READ VIA `getRawArgs()` + JSONSerialization, NOT
-//    `invoke.getArgs()`. getArgs() returns `[String: JSValue]` — a
-//    dictionary keyed on Tauri's custom existential protocol, another
-//    exotic type the optimizer instantiates lazily. JSONSerialization
-//    yields Foundation objects we read through the ubiquitous
-//    `[String: Any]` / `[String]` types, whose metadata is always present.
+// Belt-and-suspenders kept from earlier iterations:
+//   • Responses are concrete Encodable structs → Tauri's
+//     `resolve<T: Encodable>` overload (concrete type ⇒ witness passed
+//     directly, no runtime lookup) instead of `resolve(JsonObject)` →
+//     `prepare()`'s `as? [String: Any?]` cast.
+//   • Args read via `getRawArgs()` + JSONSerialization (ubiquitous
+//     `[String: Any]`/`[String]`), never `getArgs()`'s `[String: JSValue]`.
+//   • getProducts never `reject()`s (reject runs through Tauri's prepare()
+//     which we don't control); it resolves an empty list on error.
+//   • Package.swift forces this target to -Onone.
 //
-// 4. getProducts NEVER calls `invoke.reject(...)`. reject() builds
-//    `["message": msg]` and runs it through the SAME `prepare()` cast in
-//    Tauri's package (which is still optimized — we only control OUR
-//    target's -Onone). So the hot path (tap "Servers" → getProducts)
-//    resolves an (possibly empty) payload instead of rejecting. purchase/
-//    restore still reject because the Rust side needs to distinguish
-//    cancel/failure; those fire only on explicit user action.
-//
-// Field names are camelCase to match the serde `rename_all` contract on
-// the Rust side (models.rs).
+// Field names are camelCase to match the serde `rename_all` in models.rs.
 // ─────────────────────────────────────────────────────────────────────────
 
 /// One purchasable product, shaped for the Rust `Product` type.
@@ -67,15 +68,105 @@ struct PurchasesPayload: Encodable {
   let purchases: [PurchasePayload]
 }
 
-/// StoreKit 2 bridge. Each command hops onto a `Task` because StoreKit's
-/// product/purchase APIs are async; the `Invoke` is resolved/rejected
-/// from inside the task once the await chain finishes.
+/// All StoreKit 2 usage is quarantined here, behind a single
+/// `@available(iOS 15.0, *)`. That makes the compiler emit DIRECT type
+/// metadata for `Product`/`Transaction` instead of the runtime
+/// mangled-name accessor that was trapping when these types were touched
+/// from the non-availability-annotated @objc plugin methods.
+@available(iOS 15.0, *)
+enum StoreKitBridge {
+  static func getProducts(_ productIds: [String], _ invoke: Invoke) {
+    Task {
+      // StoreKit silently drops unknown ids, so the caller can pass the
+      // union of iOS+Android ids and we return only the ones that exist in
+      // App Store Connect. On error resolve an empty list (never reject) so
+      // the paywall degrades to "no plans" instead of crashing.
+      let storeProducts = (try? await Product.products(for: productIds)) ?? []
+      let products = storeProducts.map { product in
+        ProductPayload(
+          id: product.id,
+          title: product.displayName,
+          description: product.description,
+          displayPrice: product.displayPrice
+        )
+      }
+      invoke.resolve(ProductsPayload(products: products))
+    }
+  }
+
+  static func purchase(_ productId: String, _ invoke: Invoke) {
+    Task {
+      do {
+        let products = try await Product.products(for: [productId])
+        guard let product = products.first else {
+          invoke.reject("product not found: \(productId)")
+          return
+        }
+        let result = try await product.purchase()
+        switch result {
+        case .success(let verification):
+          switch verification {
+          case .verified(let transaction):
+            // Finish immediately. For auto-renewable subs the entitlement
+            // stays queryable via the App Store Server API (backend verify)
+            // and `currentEntitlements`, so finishing here only clears the
+            // unfinished-transaction queue.
+            await transaction.finish()
+            invoke.resolve(
+              PurchasePayload(
+                productId: transaction.productID,
+                platform: "ios",
+                transactionId: String(transaction.id)
+              ))
+          case .unverified(_, let error):
+            invoke.reject("could not verify purchase: \(error.localizedDescription)")
+          }
+        case .userCancelled:
+          // Surfaced as Error::UserCancelled on the Rust side (string match)
+          // so the UI stays silent instead of toasting.
+          invoke.reject("user_cancelled")
+        case .pending:
+          invoke.reject("purchase is pending approval (Ask to Buy / SCA)")
+        @unknown default:
+          invoke.reject("unknown purchase result")
+        }
+      } catch {
+        invoke.reject("purchase failed: \(error.localizedDescription)")
+      }
+    }
+  }
+
+  static func restore(_ invoke: Invoke) {
+    Task {
+      // Explicit "Restore" tap → force a sync so revoked/renewed state is
+      // fresh. Best-effort: `currentEntitlements` still answers from the
+      // on-device receipt if the sync fails or is declined.
+      try? await AppStore.sync()
+      var restored: [PurchasePayload] = []
+      for await result in Transaction.currentEntitlements {
+        if case .verified(let transaction) = result {
+          restored.append(
+            PurchasePayload(
+              productId: transaction.productID,
+              platform: "ios",
+              transactionId: String(transaction.id)
+            ))
+        }
+      }
+      invoke.resolve(PurchasesPayload(purchases: restored))
+    }
+  }
+}
+
+/// StoreKit 2 bridge. The @objc methods are thin: availability gate + arg
+/// parse + delegate to `StoreKitBridge`. They touch NO StoreKit types, so
+/// the compiler never emits a runtime type-metadata accessor for them.
 ///
-/// Scope is deliberately thin: this returns the store's product list and
-/// the receipt handle (StoreKit `transaction.id`) for a completed
-/// purchase. Entitlement granting lives on the backend, which re-checks
-/// every transaction id against the App Store Server API — the client is
-/// never trusted to assert "I paid".
+/// Scope is deliberately thin: returns the store's product list and the
+/// receipt handle (StoreKit `transaction.id`) for a completed purchase.
+/// Entitlement granting lives on the backend, which re-checks every
+/// transaction id against the App Store Server API — the client is never
+/// trusted to assert "I paid".
 class IapPlugin: Plugin {
   // MARK: - Arg parsing (Foundation-only, no Tauri existential types)
 
@@ -101,32 +192,15 @@ class IapPlugin: Plugin {
     return obj[key] as? String
   }
 
-  // MARK: - Commands
+  // MARK: - Commands (thin: gate + parse + delegate)
 
   @objc public func getProducts(_ invoke: Invoke) throws {
     guard #available(iOS 15.0, *) else {
-      // Old iOS: no StoreKit 2. Resolve an empty list rather than reject —
-      // reject routes through Tauri's prepare() which can trap in release.
       invoke.resolve(ProductsPayload(products: []))
       return
     }
     let productIds = Self.stringArray(fromRawArgs: invoke.getRawArgs(), key: "productIds")
-    Task {
-      // StoreKit silently drops unknown ids, so the caller can pass the
-      // union of iOS+Android ids and we return only the ones that exist in
-      // App Store Connect. On error we resolve an empty list (never reject)
-      // so the paywall degrades to "no plans" instead of crashing.
-      let storeProducts = (try? await Product.products(for: productIds)) ?? []
-      let products = storeProducts.map { product in
-        ProductPayload(
-          id: product.id,
-          title: product.displayName,
-          description: product.description,
-          displayPrice: product.displayPrice
-        )
-      }
-      invoke.resolve(ProductsPayload(products: products))
-    }
+    StoreKitBridge.getProducts(productIds, invoke)
   }
 
   @objc public func purchase(_ invoke: Invoke) throws {
@@ -138,45 +212,7 @@ class IapPlugin: Plugin {
       invoke.reject("missing productId")
       return
     }
-    Task {
-      do {
-        let products = try await Product.products(for: [productId])
-        guard let product = products.first else {
-          invoke.reject("product not found: \(productId)")
-          return
-        }
-        let result = try await product.purchase()
-        switch result {
-        case .success(let verification):
-          switch verification {
-          case .verified(let transaction):
-            // Finish immediately. For auto-renewable subs the entitlement
-            // stays queryable via the App Store Server API (backend
-            // verify) and `currentEntitlements`, so finishing here only
-            // clears the unfinished-transaction queue.
-            await transaction.finish()
-            invoke.resolve(
-              PurchasePayload(
-                productId: transaction.productID,
-                platform: "ios",
-                transactionId: String(transaction.id)
-              ))
-          case .unverified(_, let error):
-            invoke.reject("could not verify purchase: \(error.localizedDescription)")
-          }
-        case .userCancelled:
-          // Surfaced as Error::UserCancelled on the Rust side (string
-          // match) so the UI stays silent instead of toasting.
-          invoke.reject("user_cancelled")
-        case .pending:
-          invoke.reject("purchase is pending approval (Ask to Buy / SCA)")
-        @unknown default:
-          invoke.reject("unknown purchase result")
-        }
-      } catch {
-        invoke.reject("purchase failed: \(error.localizedDescription)")
-      }
-    }
+    StoreKitBridge.purchase(productId, invoke)
   }
 
   @objc public func restorePurchases(_ invoke: Invoke) throws {
@@ -184,24 +220,7 @@ class IapPlugin: Plugin {
       invoke.resolve(PurchasesPayload(purchases: []))
       return
     }
-    Task {
-      // Explicit "Restore" tap → force a sync so revoked/renewed state is
-      // fresh. Best-effort: `currentEntitlements` still answers from the
-      // on-device receipt if the sync fails or is declined.
-      try? await AppStore.sync()
-      var restored: [PurchasePayload] = []
-      for await result in Transaction.currentEntitlements {
-        if case .verified(let transaction) = result {
-          restored.append(
-            PurchasePayload(
-              productId: transaction.productID,
-              platform: "ios",
-              transactionId: String(transaction.id)
-            ))
-        }
-      }
-      invoke.resolve(PurchasesPayload(purchases: restored))
-    }
+    StoreKitBridge.restore(invoke)
   }
 }
 
