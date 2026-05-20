@@ -30,7 +30,31 @@ let package = Package(
             dependencies: [
                 .byName(name: "Tauri"),
             ],
-            path: "Sources"
+            path: "Sources",
+            swiftSettings: [
+                // Force -Onone on THIS target.
+                //
+                // The symbolicated v0.2.15 crash was:
+                //   __swift_instantiateConcreteTypeFromMangledNameV2
+                //   specialized IapPlugin.getProducts(_:)
+                // i.e. the release OPTIMIZER ("specialized") emitted a lazy
+                // runtime type-metadata accessor that traps (Swift SR-11564),
+                // aborting the app the instant getProducts runs.
+                //
+                // The CI's global XCODE_XCCONFIG_FILE (-Onone) does NOT reach
+                // SwiftPM dependency targets — only the app target — which is
+                // why v0.2.14 didn't help. Setting it here, on the package
+                // itself, is the only lever that reaches this target. -Onone
+                // makes the compiler emit DIRECT type-metadata references
+                // instead of the mangled-name accessors, so the trap is gone.
+                //
+                // `unsafeFlags` is permitted because Tauri references this
+                // plugin as a LOCAL path dependency (the unsafe-flags ban
+                // only applies to versioned registry/remote dependencies).
+                // The app is observation-only; the lost optimization on this
+                // thin command surface is irrelevant.
+                .unsafeFlags(["-Onone"])
+            ]
         ),
     ]
 )
