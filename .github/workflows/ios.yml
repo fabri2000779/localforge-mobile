@@ -32,11 +32,35 @@ permissions:
 jobs:
   ipa:
     name: Build IPA
-    runs-on: macos-14
+    # macos-15 ships Xcode 16.x. macos-14 only has Xcode 15, which
+    # can't open the objectVersion-77 .xcodeproj that `tauri ios init`
+    # generates ("future Xcode project file format (77)").
+    runs-on: macos-15
     timeout-minutes: 90
+    # Surface the signing secrets at JOB level so the `if:
+    # env.IOS_CERTIFICATE_BASE64 != ''` conditions on later steps can
+    # actually see them — step-level env vars aren't visible to other
+    # steps' if-conditions, which is why v0.2.3 silently fell through
+    # to the unsigned build path.
+    env:
+      IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
+      IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+      IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+      IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+      # Tauri's iOS init/build reads the signing team from
+      # APPLE_DEVELOPMENT_TEAM (not IOS_TEAM_ID). Setting it at job
+      # level means `tauri ios init` bakes DEVELOPMENT_TEAM into the
+      # generated .xcodeproj and `tauri ios build` picks the matching
+      # App Store provisioning profile we installed.
+      APPLE_DEVELOPMENT_TEAM: ${{ secrets.IOS_TEAM_ID }}
 
     steps:
       - uses: actions/checkout@v4
+
+      # Pin to the newest stable Xcode the runner has. macos-15 carries
+      # 16.x which understands the project format Tauri emits.
+      - name: Select latest Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
 
       - uses: actions/setup-node@v4
         with:
