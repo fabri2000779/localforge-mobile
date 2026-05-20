@@ -113,6 +113,29 @@ jobs:
           IOS_MOBILE_PROVISION: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
         run: npx --no-install tauri ios build --export-method app-store-connect
 
+      # Diagnostic: when the signed build fails on "requires a provisioning
+      # profile", show what Tauri actually wrote to the project and whether
+      # `security cms -D` (the exact call Tauri's uuid() makes) can decode
+      # the installed profile. Runs even on failure.
+      - name: Diagnose iOS signing
+        if: always() && env.IOS_CERTIFICATE_BASE64 != ''
+        run: |
+          echo "── pbxproj signing settings ──"
+          grep -hoE "(CODE_SIGN_STYLE|PROVISIONING_PROFILE_SPECIFIER|DEVELOPMENT_TEAM|CODE_SIGN_IDENTITY|PRODUCT_BUNDLE_IDENTIFIER)[^;]*;" src-tauri/gen/apple/*.xcodeproj/project.pbxproj | sort -u || true
+          echo "── installed provisioning profiles ──"
+          ls -la "$HOME/Library/MobileDevice/Provisioning Profiles/" 2>/dev/null || true
+          for p in "$HOME/Library/MobileDevice/Provisioning Profiles/"*.mobileprovision; do
+            [ -e "$p" ] || continue
+            echo "profile: $p"
+            if security cms -D -i "$p" > /tmp/pp.plist 2>/dev/null; then
+              echo "  UUID:  $(plutil -extract UUID raw /tmp/pp.plist 2>/dev/null)"
+              echo "  Name:  $(plutil -extract Name raw /tmp/pp.plist 2>/dev/null)"
+              echo "  AppID: $(plutil -extract Entitlements.application-identifier raw /tmp/pp.plist 2>/dev/null)"
+            else
+              echo "  !! security cms -D FAILED — this is exactly what Tauri uuid() runs"
+            fi
+          done
+
       - name: Build .app (unsigned, simulator-only)
         if: env.IOS_CERTIFICATE_BASE64 == ''
         run: npx --no-install tauri ios build
