@@ -2232,7 +2232,7 @@ dependencies = [
 
 [[package]]
 name = "localforge-mobile"
-version = "0.2.21"
+version = "0.2.22"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
