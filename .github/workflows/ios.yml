@@ -106,6 +106,20 @@ jobs:
             -P "$IOS_CERTIFICATE_PASSWORD" \
             -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple: -s -k "" build.keychain
+          # CRITICAL: add build.keychain to the SEARCH LIST. `default-keychain
+          # -s` above only marks it default; xcodebuild's code-signing identity
+          # lookup walks the *search list*, so without this the imported
+          # "Apple Distribution" cert is invisible — the build warns "No code
+          # signing certificates found", falls back to a self-signed
+          # "Tauri (unset)" placeholder, and exportArchive then dies with
+          # "Cloud signing permission error / No profiles for <bundle>".
+          # Prepend ours; keep the runner's existing keychains so the rest of
+          # the toolchain still resolves its own certs.
+          security list-keychains -d user -s build.keychain $(security list-keychains -d user | sed -e 's/"//g')
+          # Archive + export outlast the 300s default auto-lock; a mid-build
+          # lock makes codesign fail with errSecAuthFailed. Bump to 6h and
+          # drop the lock-on-sleep.
+          security set-keychain-settings -lut 21600 build.keychain
           rm /tmp/cert.p12
 
       # App Store Connect API key for xcodebuild's -allowProvisioningUpdates.
