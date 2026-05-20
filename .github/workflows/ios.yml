@@ -32,13 +32,12 @@ permissions:
 jobs:
   ipa:
     name: Build IPA
-    # Apple rejects App Store uploads built with anything older than the
-    # iOS 26 SDK (Xcode 26+) as of 2026 ("This app was built with the iOS
-    # 18.5 SDK… must be built with the iOS 26 SDK or later"). macos-15
-    # only carries Xcode 16.x, so use the macos-26 image which ships
-    # Xcode 26. (macos-15/Xcode 16 builds + signs fine but altool refuses
-    # the upload at validation.)
-    runs-on: macos-26
+    # Apple requires the iOS 26 SDK (Xcode 26+) for App Store uploads AND
+    # rejects anything built with a *beta* Xcode. The macos-26 image leads
+    # with Xcode 26.5 BETA (upload rejected: "built with a beta… use the
+    # latest RC"), so use macos-15: it ships STABLE Xcode 26 (up to 26.3)
+    # next to Xcode 16. The "Select Xcode" step pins the newest stable 26.
+    runs-on: macos-15
     timeout-minutes: 90
     # Surface the signing secrets at JOB level so the `if:
     # env.IOS_CERTIFICATE_BASE64 != ''` conditions on later steps can
