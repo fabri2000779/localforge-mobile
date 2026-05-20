@@ -1,0 +1,19 @@
+// Applied to EVERY target in the iOS build — including the
+// tauri-plugin-iap Swift Package — by pointing the XCODE_XCCONFIG_FILE
+// env var at this file in CI (see .github/workflows/ios.yml). A plain
+// build-setting edit on the app's .pbxproj does NOT reach SwiftPM
+// dependency targets, which is why v0.2.12's DEAD_CODE_STRIPPING patch
+// didn't fix the plugin crash.
+//
+// Why: the plugin's Swift command handlers crashed in release at
+// __swift_instantiateConcreteTypeFromMangledName (Swift bug SR-11564).
+// The optimizer emits runtime type-metadata instantiations (for the
+// JSONDecoder arg path AND the `as?` casts in Tauri's response
+// serialization), and that metadata gets stripped — so the lookup traps
+// and, with panic=abort, the app dies the instant the IAP plugin runs.
+//
+// -Onone stops the compiler from emitting those specializations;
+// DEAD_CODE_STRIPPING=NO keeps the metadata. Slower/larger, but this is
+// an observation-only companion app where correctness >> a few hundred KB.
+SWIFT_OPTIMIZATION_LEVEL = -Onone
+DEAD_CODE_STRIPPING = NO

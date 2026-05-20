@@ -57,6 +57,15 @@ jobs:
       # generated .xcodeproj and `tauri ios build` picks the matching
       # App Store provisioning profile we installed.
       APPLE_DEVELOPMENT_TEAM: ${{ secrets.IOS_TEAM_ID }}
+      # Point EVERY Xcode target — including the tauri-plugin-iap Swift
+      # Package — at our override xcconfig. A plain pbxproj edit only
+      # reaches the app target, NOT SwiftPM dependency targets, which is
+      # why v0.2.13's DEAD_CODE_STRIPPING patch didn't stop the plugin's
+      # release crash (__swift_instantiateConcreteTypeFromMangledName,
+      # Swift SR-11564). The file sets SWIFT_OPTIMIZATION_LEVEL=-Onone +
+      # DEAD_CODE_STRIPPING=NO so the optimizer stops emitting — and the
+      # linker stops stripping — the Codable/`as?`-cast type metadata.
+      XCODE_XCCONFIG_FILE: ${{ github.workspace }}/src-tauri/ios-overrides.xcconfig
 
     steps:
       - uses: actions/checkout@v4
@@ -114,22 +123,6 @@ jobs:
       # powers IAP receipt verification on the cloud — a separate use.)
       - name: Generate Tauri iOS project
         run: npx --no-install tauri ios init --ci
-
-      # Tauri iOS plugins decode their command args with JSONDecoder over
-      # Codable types defined inside the plugin's Swift Package
-      # (tauri-plugin-iap). Xcode's DEAD_CODE_STRIPPING drops those types'
-      # runtime metadata, so decoding traps in
-      # __swift_instantiateConcreteTypeFromMangledName and the app crashes
-      # the moment the IAP plugin runs (getProducts on the paywall). This
-      # is the documented workaround for Swift SR-11564. Disable it across
-      # every build configuration in the generated project. (`sed -i ''`
-      # is BSD/macOS syntax — the runner is macOS.)
-      - name: Disable dead-code stripping (Swift Codable metadata fix)
-        run: |
-          PBX=$(ls src-tauri/gen/apple/*.xcodeproj/project.pbxproj | head -1)
-          echo "Patching $PBX"
-          sed -i '' 's/buildSettings = {/buildSettings = {\n\t\t\t\tDEAD_CODE_STRIPPING = NO;/g' "$PBX"
-          echo "DEAD_CODE_STRIPPING entries: $(grep -c "DEAD_CODE_STRIPPING = NO" "$PBX")"
 
       # ─── Build ───────────────────────────────────────────────────
       - name: Build IPA (signed)
