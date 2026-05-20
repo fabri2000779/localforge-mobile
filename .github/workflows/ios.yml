@@ -68,7 +68,7 @@ jobs:
       XCODE_XCCONFIG_FILE: ${{ github.workspace }}/src-tauri/ios-overrides.xcconfig
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # Select Xcode 26 (required: App Store wants the iOS 26 SDK) and make
       # sure the iOS platform/runtime is actually installed. Prefer a
@@ -88,9 +88,9 @@ jobs:
           xcodebuild -downloadPlatform iOS -quiet || sudo xcodebuild -downloadPlatform iOS || true
           echo "── iOS SDKs ──"; xcodebuild -showsdks | grep -i iphoneos || true
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          node-version: '24'
           cache: 'npm'
       - run: npm ci
       - run: npm run build
@@ -203,7 +203,7 @@ jobs:
 
       - name: Upload IPA to Release
         if: startsWith(github.ref, 'refs/tags/v') && env.IOS_CERTIFICATE_BASE64 != ''
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: src-tauri/gen/apple/build/arm64/*.ipa
           draft: true
@@ -211,7 +211,7 @@ jobs:
 
       - name: Upload unsigned .app for inspection
         if: env.IOS_CERTIFICATE_BASE64 == ''
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: LocalForge-ios-app-unsigned
           path: src-tauri/gen/apple/build/arm64/*.app
