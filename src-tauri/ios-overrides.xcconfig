@@ -1,19 +1,22 @@
-// Applied to EVERY target in the iOS build — including the
-// tauri-plugin-iap Swift Package — by pointing the XCODE_XCCONFIG_FILE
-// env var at this file in CI (see .github/workflows/ios.yml). A plain
-// build-setting edit on the app's .pbxproj does NOT reach SwiftPM
-// dependency targets, which is why v0.2.12's DEAD_CODE_STRIPPING patch
-// didn't fix the plugin crash.
+// DEFENSE-IN-DEPTH ONLY. The real fix for the IAP plugin's release crash
+// (__swift_instantiateConcreteTypeFromMangledName, Swift SR-11564) lives
+// in the Swift source: IapPlugin now resolves CONCRETE Encodable structs,
+// which take Tauri's `resolve<T: Encodable>` overload (straight
+// JSONEncoder, no reflection) instead of `resolve(JsonObject)` →
+// `JsonValue.prepare()`, whose `value as? [String: Any?]` dynamic cast was
+// the actual trap. See the header comment in ios/Sources/IapPlugin.swift.
 //
-// Why: the plugin's Swift command handlers crashed in release at
-// __swift_instantiateConcreteTypeFromMangledName (Swift bug SR-11564).
-// The optimizer emits runtime type-metadata instantiations (for the
-// JSONDecoder arg path AND the `as?` casts in Tauri's response
-// serialization), and that metadata gets stripped — so the lookup traps
-// and, with panic=abort, the app dies the instant the IAP plugin runs.
-//
-// -Onone stops the compiler from emitting those specializations;
-// DEAD_CODE_STRIPPING=NO keeps the metadata. Slower/larger, but this is
-// an observation-only companion app where correctness >> a few hundred KB.
+// This file stays because Tauri's `invoke.reject(...)` STILL routes through
+// `prepare()` (we can't change Tauri's method), and so do any other
+// plugins' dict-based resolves. Pointing XCODE_XCCONFIG_FILE here (CI:
+// .github/workflows/ios.yml) applies these to EVERY target — including
+// SwiftPM dependency targets a .pbxproj edit can't reach:
+//   -Onone               → compiler emits direct type refs, not lazy
+//                          mangled-name instantiations
+//   DEAD_CODE_STRIPPING=NO → keep the type metadata at link time
+// Slower/larger, but this is an observation-only companion app where
+// correctness >> a few hundred KB. NOTE: this alone did NOT fix v0.2.14 —
+// it may not propagate to SwiftPM targets under Tauri's xcodebuild — which
+// is exactly why the v0.2.15 source-level Encodable fix was needed.
 SWIFT_OPTIMIZATION_LEVEL = -Onone
 DEAD_CODE_STRIPPING = NO

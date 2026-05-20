@@ -2,15 +2,72 @@ import Foundation
 import StoreKit
 import Tauri
 
-// NOTE: we deliberately read command args with `invoke.getArgs()`
-// (a JSONSerialization-backed [String: Any]) rather than the generic
-// `invoke.parseArgs(SomeDecodable.self)`. The generic path makes the
-// Swift runtime instantiate the arg type's metadata by mangled name
-// (__swift_instantiateConcreteTypeFromMangledName); for a Codable type
-// defined in this Swift Package that metadata gets stripped in the
-// release build and the lookup TRAPS — crashing the app the instant the
-// plugin runs (Swift SR-11564). getArgs() avoids the Decodable path
-// entirely.
+// ─────────────────────────────────────────────────────────────────────────
+// Why this plugin returns Encodable STRUCTS, never `[String: Any]` dicts.
+//
+// The release crash we chased for several builds
+// (__swift_instantiateConcreteTypeFromMangledName, abort on the StoreKit
+// dispatch queue — Swift SR-11564) was NOT in our code: it was in Tauri's
+// own `Invoke.resolve(JsonObject)` path. That overload funnels into
+// `JsonValue.jsonRepresentation()` → `prepare(dictionary:)`, which runs
+// this on every value:
+//
+//     } else if let aDictionary = value as? JsonObject {   // [String: Any?]
+//
+// That `as? [String: Any?]` is a dynamic cast to a nested generic whose
+// value type is `Optional<Any>`. To attempt it, the Swift runtime must
+// instantiate `Dictionary<String, Optional<Any>>` metadata by mangled
+// name; in our optimized/stripped static-library build that instantiation
+// traps and, with panic=abort, kills the app the instant the IAP plugin
+// resolves. It fires for ANY non-trivial dictionary payload, so neither
+// the app-target DEAD_CODE_STRIPPING patch (the code lives in Tauri's SPM
+// package) nor switching arg parsing to getArgs() could fix it.
+//
+// `Invoke.resolve<T: Encodable>(_:)` is a DIFFERENT overload: it calls
+// `JSONEncoder().encode(data)` directly and never touches
+// `prepare()`/`jsonRepresentation()`. Encoding a CONCRETE struct uses the
+// compiler-synthesized witness (no runtime type-by-name lookup), so it
+// sidesteps the trap entirely. Hence: every response below is a concrete
+// Encodable struct, and we pass it straight to `invoke.resolve(_:)`.
+//
+// Property names are camelCase to match the serde `rename_all` contract on
+// the Rust side (models.rs): Product {id,title,description,displayPrice}
+// and PurchaseResult {productId,platform,transactionId}. The `plan` field
+// is filled by guest-js from the id, so the native side omits it.
+//
+// Args are still read with `invoke.getArgs()` — that path coerces via
+// JSONSerialization into Foundation types (NSArray/NSString/NSNumber) and
+// only ever casts to those ObjC classes or to ubiquitous types like
+// `[String]`, never to `[String: Any?]`, so it does not hit the trap.
+// ─────────────────────────────────────────────────────────────────────────
+
+/// One purchasable product, shaped for the Rust `Product` type.
+struct ProductPayload: Encodable {
+  let id: String
+  let title: String
+  let description: String
+  let displayPrice: String
+}
+
+/// `getProducts` response wrapper. Native always resolves an object (the
+/// Android side can't resolve a bare array), so the list is nested.
+struct ProductsPayload: Encodable {
+  let products: [ProductPayload]
+}
+
+/// One completed/restored purchase, shaped for the Rust `PurchaseResult`
+/// type. `purchaseToken` (Android-only) is omitted; serde defaults the
+/// absent Option to None.
+struct PurchasePayload: Encodable {
+  let productId: String
+  let platform: String
+  let transactionId: String
+}
+
+/// `restorePurchases` response wrapper.
+struct PurchasesPayload: Encodable {
+  let purchases: [PurchasePayload]
+}
 
 /// StoreKit 2 bridge. Each command hops onto a `Task` because StoreKit's
 /// product/purchase APIs are async; the `Invoke` is resolved/rejected
@@ -37,15 +94,15 @@ class IapPlugin: Plugin {
         // union of iOS+Android ids and we return only the ones that exist
         // in App Store Connect.
         let storeProducts = try await Product.products(for: productIds)
-        let payload: [[String: Any]] = storeProducts.map { product in
-          [
-            "id": product.id,
-            "title": product.displayName,
-            "description": product.description,
-            "displayPrice": product.displayPrice,
-          ]
+        let products = storeProducts.map { product in
+          ProductPayload(
+            id: product.id,
+            title: product.displayName,
+            description: product.description,
+            displayPrice: product.displayPrice
+          )
         }
-        invoke.resolve(["products": payload])
+        invoke.resolve(ProductsPayload(products: products))
       } catch {
         invoke.reject("failed to load products: \(error.localizedDescription)")
       }
@@ -79,11 +136,12 @@ class IapPlugin: Plugin {
             // verify) and `currentEntitlements`, so finishing here only
             // clears the unfinished-transaction queue.
             await transaction.finish()
-            invoke.resolve([
-              "productId": transaction.productID,
-              "platform": "ios",
-              "transactionId": String(transaction.id),
-            ])
+            invoke.resolve(
+              PurchasePayload(
+                productId: transaction.productID,
+                platform: "ios",
+                transactionId: String(transaction.id)
+              ))
           case .unverified(_, let error):
             invoke.reject("could not verify purchase: \(error.localizedDescription)")
           }
@@ -112,17 +170,18 @@ class IapPlugin: Plugin {
       // fresh. Best-effort: `currentEntitlements` still answers from the
       // on-device receipt if the sync fails or is declined.
       try? await AppStore.sync()
-      var restored: [[String: Any]] = []
+      var restored: [PurchasePayload] = []
       for await result in Transaction.currentEntitlements {
         if case .verified(let transaction) = result {
-          restored.append([
-            "productId": transaction.productID,
-            "platform": "ios",
-            "transactionId": String(transaction.id),
-          ])
+          restored.append(
+            PurchasePayload(
+              productId: transaction.productID,
+              platform: "ios",
+              transactionId: String(transaction.id)
+            ))
         }
       }
-      invoke.resolve(["purchases": restored])
+      invoke.resolve(PurchasesPayload(purchases: restored))
     }
   }
 }
