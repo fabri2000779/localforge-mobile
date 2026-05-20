@@ -132,6 +132,19 @@ jobs:
         env:
           NDK_HOME: ${{ env.NDK_HOME }}
 
+      # Same fix as iOS: `tauri android init` writes Tauri's PLACEHOLDER
+      # launcher icons into the generated res/, not our real ones. Copy our
+      # LocalForge mipmaps (incl. the adaptive-icon foreground + background)
+      # over them so the launcher shows the LF logo, not the template loop.
+      - name: Apply LocalForge launcher icon to the Android project
+        run: |
+          RES=src-tauri/gen/android/app/src/main/res
+          if [ ! -d "$RES" ]; then RES=$(ls -d src-tauri/gen/android/app/src/*/res 2>/dev/null | head -1); fi
+          if [ -z "$RES" ] || [ ! -d "$RES" ]; then echo "::error::android res dir not found"; exit 1; fi
+          cp -r src-tauri/icons/android/* "$RES/"
+          echo "Applied launcher icons to $RES"
+          ls "$RES" | grep -i mipmap || true
+
       # ─── Signing (release only) ──────────────────────────────────
       # Only runs when the build is for a tag. Debug builds use the
       # default debug keystore Android Studio ships.

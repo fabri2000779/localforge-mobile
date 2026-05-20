@@ -124,6 +124,22 @@ jobs:
       - name: Generate Tauri iOS project
         run: npx --no-install tauri ios init --ci
 
+      # `tauri ios init` populates the generated AppIcon.appiconset with
+      # Tauri's PLACEHDER icons (a teal/orange loop), NOT our
+      # src-tauri/icons/ios/* — verified by decoding the shipped CgBI
+      # AppIcon out of a built IPA. So the app always showed the template
+      # icon, which is near-invisible on a dark home screen. Overwrite the
+      # appiconset PNGs with our real (opaque, no-alpha) LocalForge icons.
+      # The Contents.json the template wrote references these exact names,
+      # so a straight copy is enough — no JSON edit needed.
+      - name: Apply LocalForge app icon to the iOS project
+        run: |
+          DEST=$(ls -d src-tauri/gen/apple/*/Assets.xcassets/AppIcon.appiconset 2>/dev/null | head -1)
+          if [ -z "$DEST" ]; then echo "::error::AppIcon.appiconset not found"; exit 1; fi
+          cp src-tauri/icons/ios/*.png "$DEST/"
+          echo "Applied $(ls src-tauri/icons/ios/*.png | wc -l) icons to $DEST"
+          ls "$DEST"
+
       # ─── Build ───────────────────────────────────────────────────
       - name: Build IPA (signed)
         if: env.IOS_CERTIFICATE_BASE64 != ''
