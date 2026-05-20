@@ -134,8 +134,11 @@ jobs:
       # so a straight copy is enough — no JSON edit needed.
       - name: Apply LocalForge app icon to the iOS project
         run: |
-          DEST=$(ls -d src-tauri/gen/apple/*/Assets.xcassets/AppIcon.appiconset 2>/dev/null | head -1)
-          if [ -z "$DEST" ]; then echo "::error::AppIcon.appiconset not found"; exit 1; fi
+          # Tauri puts the catalog at src-tauri/gen/apple/Assets.xcassets
+          # (no per-target subdir), so locate the appiconset with find
+          # rather than assuming a fixed depth.
+          DEST=$(find src-tauri/gen/apple -type d -name 'AppIcon.appiconset' 2>/dev/null | head -1)
+          if [ -z "$DEST" ]; then echo "::error::AppIcon.appiconset not found"; find src-tauri/gen/apple -name '*.xcassets' -o -name '*.appiconset' | head; exit 1; fi
           cp src-tauri/icons/ios/*.png "$DEST/"
           echo "Applied $(ls src-tauri/icons/ios/*.png | wc -l) icons to $DEST"
           ls "$DEST"
