@@ -101,6 +101,16 @@ jobs:
           security create-keychain -p "" build.keychain
           security default-keychain -s build.keychain
           security unlock-keychain -p "" build.keychain
+          # Apple WWDR G3 intermediate — the ISSUER of the distribution
+          # cert. The .p12 ships only the leaf, so without its issuer in
+          # the keychain the chain can't be validated and
+          # `security find-identity -v -p codesigning` returns nothing.
+          # That's why Tauri kept reporting "No code signing certificates
+          # found" and self-signed an "Apple Distribution: Tauri (unset)"
+          # placeholder, which then failed exportArchive.
+          curl -fsSL https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer -o /tmp/wwdr.cer
+          security import /tmp/wwdr.cer -k build.keychain -T /usr/bin/codesign || true
+          rm -f /tmp/wwdr.cer
           security import /tmp/cert.p12 \
             -k build.keychain \
             -P "$IOS_CERTIFICATE_PASSWORD" \
@@ -121,6 +131,12 @@ jobs:
           # drop the lock-on-sleep.
           security set-keychain-settings -lut 21600 build.keychain
           rm /tmp/cert.p12
+          # Diagnostic: this MUST list "Apple Distribution: Fabrizio
+          # Lamanna (BMB457M9HR)" as a valid identity. If it shows
+          # "0 valid identities found", the chain still isn't resolving
+          # and Tauri will self-sign a placeholder again.
+          echo "── valid codesigning identities ──"
+          security find-identity -v -p codesigning
 
       # App Store Connect API key for xcodebuild's -allowProvisioningUpdates.
       # Without this, the build dies with "No Accounts: Add a new account
