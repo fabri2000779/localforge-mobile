@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Extra iOS Info.plist keys. Tauri's `ios build` auto-merges
+  src-tauri/Info.ios.plist into the generated Info.plist (see tauri-cli
+  mobile/ios/build.rs).
+
+  ITSAppUsesNonExemptEncryption = false declares the app uses only
+  EXEMPT encryption: standard HTTPS/TLS for talking to the cloud (and
+  standard AES, used ancillary to the app's function — server
+  management, not a cryptography product). That's exempt under EAR
+  Category 5 Part 2 / Note 4, so no export-compliance docs or French
+  declaration are needed. Setting it here makes App Store Connect skip
+  the encryption questionnaire on every TestFlight/App Store upload.
+-->
+<plist version="1.0">
+<dict>
+    <key>ITSAppUsesNonExemptEncryption</key>
+    <false/>
+</dict>
+</plist>
