@@ -9,12 +9,13 @@
  * in src/components/README when we approach it (org switcher, settings,
  * audit log etc.).
  */
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { LoginScreen } from './components/LoginScreen';
 import { HomeScreen } from './components/HomeScreen';
 import { ServerListScreen } from './components/ServerListScreen';
 import { ServerDetailScreen } from './components/ServerDetailScreen';
 import { cloudMe, type Me, type ServerSummary } from './lib/cloud';
+import { useSwipeBack } from './lib/useSwipeBack';
 import './App.css';
 
 type Route =
@@ -47,6 +48,23 @@ function App() {
         setState({ kind: 'signed-out' });
       });
   }, []);
+
+  // One step "back" through the signed-in routes: server → servers →
+  // home. Functional update so the callback is stable (no `state` dep)
+  // and safe to hand to the swipe recognizer. The icon-btn back buttons
+  // call the same transitions, so gesture and button stay in lock-step.
+  const goBack = useCallback(() => {
+    setState((s) => {
+      if (s.kind !== 'signed-in') return s;
+      if (s.route.kind === 'server') return { ...s, route: { kind: 'servers' } };
+      if (s.route.kind === 'servers') return { ...s, route: { kind: 'home' } };
+      return s; // home is the root — nothing to pop
+    });
+  }, []);
+
+  // Enable the left-edge swipe only when there's somewhere to go back to.
+  const canGoBack = state.kind === 'signed-in' && state.route.kind !== 'home';
+  useSwipeBack(goBack, canGoBack);
 
   if (state.kind === 'loading') {
     return (

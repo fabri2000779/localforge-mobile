@@ -138,10 +138,16 @@ enum StoreKitBridge {
 
   static func restore(_ invoke: Invoke) {
     Task {
-      // Explicit "Restore" tap → force a sync so revoked/renewed state is
-      // fresh. Best-effort: `currentEntitlements` still answers from the
-      // on-device receipt if the sync fails or is declined.
-      try? await AppStore.sync()
+      // Read entitlements straight from `Transaction.currentEntitlements`,
+      // the StoreKit 2 source of truth. We deliberately do NOT call
+      // `AppStore.sync()` here: sync() forces an App Store account refresh
+      // that pops a MODAL Apple ID password prompt the user can't dismiss
+      // without authenticating — terrible for a "Restore" tap. The
+      // entitlements cache is already populated from the signed-in Apple
+      // ID for any active subscription (purchased on this or another
+      // device), so restore works without it. (sync() is only needed to
+      // force-refresh after e.g. a refund, which the backend re-check
+      // catches anyway.)
       var restored: [PurchasePayload] = []
       for await result in Transaction.currentEntitlements {
         if case .verified(let transaction) = result {

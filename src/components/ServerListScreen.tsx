@@ -2,11 +2,10 @@
  * Server list — what the user has stored in the cloud (one row per
  * synced server, regardless of which desktop/VPS it actually runs on).
  *
- * v0.0.x is observation-only: just name + last-synced timestamp.
- * "Online / Offline" + console + start/stop come in subsequent
- * commits once the mobile relay client lands. Tapping a row today
- * shows the detail card with the metadata we have; the live state
- * panel below it is a "Coming next" placeholder.
+ * Each row shows the server name, last-synced time, and — once the relay
+ * connects and the owner answers `state.snapshot` — a live status badge
+ * (running / stopped / crashed …). Tapping a row opens the detail screen
+ * with start/stop/restart controls and a live console.
  */
 import { useEffect, useState } from 'react';
 import {
@@ -89,10 +88,10 @@ export function ServerListScreen({ me, onBack, onOpenServer, onMeUpdated }: Prop
   // Mount the relay connection for paid users — Tauri keeps it open
   // across screen navigations until we stop it, but we tear it down
   // on unmount so we don't keep a WS dangling when the user signs
-  // out + comes back. The infrastructure is ready for live state;
-  // the owner-side `state_snapshot` command handler that actually
-  // populates `relay-event` lands in a follow-up co-commit on the
-  // desktop crate.
+  // out + comes back. The owner's RelayCommandExecutor answers
+  // `state.snapshot` with a `state_snapshot` event and pushes
+  // `server.state_changed` on every transition, which the subscription
+  // below turns into the per-row status badges.
   useEffect(() => {
     if (!isPaid) return;
     let unsubConnected: (() => void) | undefined;

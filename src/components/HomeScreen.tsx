@@ -4,7 +4,7 @@
  * billing, audit log, settings.
  */
 import { useState } from 'react';
-import { ChevronRight, LogOut, ServerCog, Sparkles } from 'lucide-react';
+import { ChevronRight, LogOut, ServerCog } from 'lucide-react';
 import { cloudLogout, type Me } from '../lib/cloud';
 
 interface Props {
@@ -76,23 +76,11 @@ export function HomeScreen({ me, onSignedOut, onOpenServers }: Props) {
           <div className="nav-card-sub">
             {plan === 'free'
               ? 'Sync unlocks with Hobby — preview the list anyway'
-              : 'Names, last sync time, and (next) live status'}
+              : 'Live status, console and start/stop controls'}
           </div>
         </div>
         <ChevronRight size={18} className="nav-card-chev" />
       </button>
-
-      <section className="card card-coming-soon">
-        <Sparkles size={18} color="#60a5fa" />
-        <div>
-          <h2>Live state arrives next</h2>
-          <p>
-            The mobile relay client is the next piece — once it lands you'll
-            see real-time status, console tails and start/stop controls
-            for every server running on your LocalForge desktop or VPS.
-          </p>
-        </div>
-      </section>
     </div>
   );
 }

@@ -8,13 +8,12 @@
  * sends a `cmd_result` event back. We catch the result and surface a
  * brief toast so the user knows whether the command landed.
  *
- * v0.1.x does NOT show live container state (running / stopped /
- * crashed) — that needs a `state.snapshot` round-trip on connect
- * that the desktop owner isn't yet wired to answer. The button
- * states therefore work optimistically: every action is allowed,
- * the result is reported after the fact.
+ * Buttons work optimistically: every action is allowed and the result
+ * (a `cmd_result` event) is surfaced as a toast after the owner runs it.
+ * Live container state badges live on the list screen; per-server live
+ * console is wired below via `server.attach` → `server-log` events.
  *
- * Console tail and file manager are explicitly out of scope for v0.1.x.
+ * File manager is the one piece still out of scope on mobile.
  */
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
