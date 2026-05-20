@@ -2232,7 +2232,7 @@ dependencies = [
 
 [[package]]
 name = "localforge-mobile"
-version = "0.2.10"
+version = "0.2.11"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2241,6 +2241,7 @@ dependencies = [
  "localforge-cloud-client",
  "localforge-core",
  "rand",
+ "rustls",
  "serde",
  "serde_json",
  "tauri",

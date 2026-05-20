@@ -1,6 +1,6 @@
 [package]
 name = "localforge-mobile"
-version = "0.2.10"
+version = "0.2.11"
 description = "LocalForge mobile companion — iOS + Android"
 authors = ["Fabrizio"]
 edition = "2021"
@@ -73,6 +73,17 @@ futures-util = "0.3"
 # cloud-client transitively brings rand in but Cargo's visibility
 # rules don't expose transitive deps, so we list it directly.
 rand = "0.9"
+
+# rustls is pulled in transitively (reqwest in the cloud-client + the
+# relay WebSocket), both built with a "rustls-no-provider" feature — so
+# NO process-default CryptoProvider is installed automatically. We must
+# install one at startup (see lib.rs::run) or reqwest's
+# `Client::builder().build()` returns Err, the cloud-client's `.expect`
+# panics, and (with panic=abort) the app HARD-CRASHES on the first cloud
+# call — login, OAuth callback, sync. Direct dep so we can reach
+# `rustls::crypto::ring::default_provider()`. `ring` is the most
+# reliable rustls provider on iOS/Android.
+rustls = { version = "0.23", features = ["ring"] }
 
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

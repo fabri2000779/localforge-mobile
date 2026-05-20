@@ -11,6 +11,17 @@ mod sync;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // CRITICAL: install rustls' process-default crypto provider before
+    // anything makes an HTTPS request. reqwest (in the cloud-client) and
+    // the relay WS are built with rustls' "no-provider" feature, so the
+    // default provider isn't set automatically. Without this, the very
+    // first cloud call (login / OAuth callback / sync) hits
+    // `reqwest::Client::builder().build().expect(...)`, which returns Err
+    // when no provider is installed → panic → and with panic=abort the
+    // whole app crashes. Idempotent: returns Err (ignored) if a default
+    // is already installed.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
