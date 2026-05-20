@@ -32,10 +32,13 @@ permissions:
 jobs:
   ipa:
     name: Build IPA
-    # macos-15 ships Xcode 16.x. macos-14 only has Xcode 15, which
-    # can't open the objectVersion-77 .xcodeproj that `tauri ios init`
-    # generates ("future Xcode project file format (77)").
-    runs-on: macos-15
+    # Apple rejects App Store uploads built with anything older than the
+    # iOS 26 SDK (Xcode 26+) as of 2026 ("This app was built with the iOS
+    # 18.5 SDK… must be built with the iOS 26 SDK or later"). macos-15
+    # only carries Xcode 16.x, so use the macos-26 image which ships
+    # Xcode 26. (macos-15/Xcode 16 builds + signs fine but altool refuses
+    # the upload at validation.)
+    runs-on: macos-26
     timeout-minutes: 90
     # Surface the signing secrets at JOB level so the `if:
     # env.IOS_CERTIFICATE_BASE64 != ''` conditions on later steps can
@@ -59,10 +62,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Pin to the newest stable Xcode the runner has. macos-15 carries
-      # 16.x which understands the project format Tauri emits.
+      # Pin to the newest Xcode the runner has — must be 26+ so the
+      # iOS 26 SDK is used (App Store upload requirement). Prefer an
+      # explicit Xcode_26*.app, else fall back to the default.
       - name: Select latest Xcode
-        run: sudo xcode-select -s /Applications/Xcode.app
+        run: |
+          sudo xcode-select -s "$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1 || echo /Applications/Xcode.app)"
+          xcodebuild -version
 
       - uses: actions/setup-node@v4
         with:
