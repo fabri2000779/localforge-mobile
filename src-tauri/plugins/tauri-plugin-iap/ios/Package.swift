@@ -1,4 +1,7 @@
-// swift-tools-version:5.3
+// swift-tools-version:5.5
+// (5.5 is the minimum that exposes `.iOS(.v15)` in PackageDescription —
+// 5.3 only went up to .v14. We need .v15 so this package compiles against
+// the OS-native Swift Concurrency runtime, not the buggy back-deploy one.)
 import PackageDescription
 
 let package = Package(
