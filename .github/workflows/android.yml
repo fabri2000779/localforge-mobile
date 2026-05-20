@@ -195,7 +195,13 @@ jobs:
           set -euo pipefail
           KS="$(pwd)/src-tauri/gen/android/.signing/release.keystore"
 
-          AAB="$(find src-tauri/gen/android -path '*bundle*' -name '*.aab' | head -1)"
+          # Sign the FINAL output bundle, NOT the intermediary one.
+          # v0.2.3's `-path '*bundle*'` matched
+          # intermediates/.../intermediary-bundle.aab first (head -1),
+          # signed that, and left the actual upload artifact in
+          # outputs/bundle/ unsigned → Play still rejected it. Target
+          # the outputs dir explicitly.
+          AAB="$(find src-tauri/gen/android/app/build/outputs/bundle -name '*.aab' | head -1)"
           echo "→ Signing AAB: $AAB"
           jarsigner -sigalg SHA256withRSA -digestalg SHA-256 \
             -keystore "$KS" -storetype PKCS12 \
@@ -203,7 +209,7 @@ jobs:
             "$AAB" "$ANDROID_KEY_ALIAS"
           jarsigner -verify "$AAB" && echo "✓ AAB signature verified"
 
-          APK="$(find src-tauri/gen/android -path '*apk*release*' -name '*.apk' | head -1)"
+          APK="$(find src-tauri/gen/android/app/build/outputs/apk -path '*release*' -name '*.apk' | head -1)"
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)"
           echo "→ Signing APK: $APK with $APKSIGNER"
           "$APKSIGNER" sign \
