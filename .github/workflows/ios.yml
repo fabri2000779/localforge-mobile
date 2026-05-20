@@ -47,6 +47,8 @@ jobs:
       IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
       IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
       IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+      # App Store Connect API key (for xcodebuild auto-provisioning).
+      APPLE_API_PRIVATE_KEY_BASE64: ${{ secrets.APPLE_API_PRIVATE_KEY_BASE64 }}
       # Tauri's iOS init/build reads the signing team from
       # APPLE_DEVELOPMENT_TEAM (not IOS_TEAM_ID). Setting it at job
       # level means `tauri ios init` bakes DEVELOPMENT_TEAM into the
@@ -106,6 +108,27 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -s -k "" build.keychain
           rm /tmp/cert.p12
 
+      # App Store Connect API key for xcodebuild's -allowProvisioningUpdates.
+      # Without this, the build dies with "No Accounts: Add a new account
+      # in Accounts settings" because automatic signing needs an Apple
+      # login the headless runner doesn't have. The API key lets
+      # xcodebuild authenticate + auto-generate/download the App Store
+      # provisioning profile non-interactively. Tauri's ios build reads
+      # APPLE_API_KEY / APPLE_API_ISSUER / APPLE_API_KEY_PATH and passes
+      # them through to xcodebuild.
+      #
+      # This is the SAME App Store Connect API key used for IAP receipt
+      # verification on the cloud (Fase 2-B) — one key, two uses.
+      - name: Install App Store Connect API key
+        if: env.APPLE_API_PRIVATE_KEY_BASE64 != ''
+        env:
+          APPLE_API_PRIVATE_KEY_BASE64: ${{ secrets.APPLE_API_PRIVATE_KEY_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+        run: |
+          mkdir -p ~/.appstoreconnect/private_keys
+          printf '%s' "$APPLE_API_PRIVATE_KEY_BASE64" | tr -d '\r\n\t ' | base64 -D \
+            > ~/.appstoreconnect/private_keys/AuthKey_${APPLE_API_KEY_ID}.p8
+
       - name: Generate Tauri iOS project
         run: npx --no-install tauri ios init --ci
 
@@ -114,7 +137,15 @@ jobs:
         if: env.IOS_CERTIFICATE_BASE64 != ''
         env:
           IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
-        run: npx --no-install tauri ios build --export-method app-store-connect
+          # Hand the API key to Tauri → xcodebuild for automatic
+          # provisioning. Path is the canonical location Apple tools
+          # look in, so APPLE_API_KEY_PATH could be omitted, but we set
+          # it explicitly for clarity.
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER_ID }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY_ID }}
+        run: |
+          export APPLE_API_KEY_PATH="$HOME/.appstoreconnect/private_keys/AuthKey_${APPLE_API_KEY}.p8"
+          npx --no-install tauri ios build --export-method app-store-connect
 
       - name: Build .app (unsigned, simulator-only)
         if: env.IOS_CERTIFICATE_BASE64 == ''
