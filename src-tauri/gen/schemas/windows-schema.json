@@ -2415,6 +2415,48 @@
           "markdownDescription": "Denies the unregister command without any pre-configured scope."
         },
         {
+          "description": "Allows listing products, making a purchase, and restoring purchases.\n#### This default permission set includes:\n\n- `allow-get-products`\n- `allow-purchase`\n- `allow-restore-purchases`",
+          "type": "string",
+          "const": "iap:default",
+          "markdownDescription": "Allows listing products, making a purchase, and restoring purchases.\n#### This default permission set includes:\n\n- `allow-get-products`\n- `allow-purchase`\n- `allow-restore-purchases`"
+        },
+        {
+          "description": "Enables the get_products command without any pre-configured scope.",
+          "type": "string",
+          "const": "iap:allow-get-products",
+          "markdownDescription": "Enables the get_products command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the purchase command without any pre-configured scope.",
+          "type": "string",
+          "const": "iap:allow-purchase",
+          "markdownDescription": "Enables the purchase command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the restore_purchases command without any pre-configured scope.",
+          "type": "string",
+          "const": "iap:allow-restore-purchases",
+          "markdownDescription": "Enables the restore_purchases command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_products command without any pre-configured scope.",
+          "type": "string",
+          "const": "iap:deny-get-products",
+          "markdownDescription": "Denies the get_products command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the purchase command without any pre-configured scope.",
+          "type": "string",
+          "const": "iap:deny-purchase",
+          "markdownDescription": "Denies the purchase command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the restore_purchases command without any pre-configured scope.",
+          "type": "string",
+          "const": "iap:deny-restore-purchases",
+          "markdownDescription": "Denies the restore_purchases command without any pre-configured scope."
+        },
+        {
           "description": "This permission set allows opening `mailto:`, `tel:`, `https://` and `http://` urls using their default application\nas well as reveal file in directories using default file explorer\n#### This default permission set includes:\n\n- `allow-open-url`\n- `allow-reveal-item-in-dir`\n- `allow-default-urls`",
           "type": "string",
           "const": "opener:default",

@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
@@ -9,6 +10,17 @@ const host = process.env.TAURI_DEV_HOST;
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+
+  resolve: {
+    alias: {
+      // Local IAP plugin's JS API. Lives under src-tauri/ (next to its
+      // Rust + native code) rather than node_modules since it's not
+      // published; the alias lets app code import it like a package.
+      'tauri-plugin-iap-api': fileURLToPath(
+        new URL('./src-tauri/plugins/tauri-plugin-iap/guest-js/index.ts', import.meta.url),
+      ),
+    },
+  },
 
   clearScreen: false,
   server: {

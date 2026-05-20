@@ -99,6 +99,7 @@ function App() {
             onOpenServer={(server) =>
               setState({ ...s, route: { kind: 'server', server } })
             }
+            onMeUpdated={(me) => setState({ ...s, me })}
           />
         );
       case 'server':

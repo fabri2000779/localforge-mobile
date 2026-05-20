@@ -33,6 +33,14 @@ tauri-plugin-deep-link = "2"
 # that URL back to us via the deep-link plugin.
 tauri-plugin-opener = "2"
 
+# In-App Purchase bridge — native StoreKit (iOS) / Play Billing
+# (Android). Local plugin: the Rust side is a thin command surface, the
+# real purchase flow runs in the bundled Swift/Kotlin. Desktop preview
+# builds get a stub that returns `unsupported`. The receipt handle it
+# returns is verified by `crate::iap` against the cloud before any plan
+# is granted.
+tauri-plugin-iap = { path = "plugins/tauri-plugin-iap" }
+
 # Shared crates pulled from the public localforge repo. Cargo walks
 # the repo tree at fetch time, finds the Cargo.toml whose package
 # name matches, and uses that crate.

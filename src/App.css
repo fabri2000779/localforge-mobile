@@ -631,6 +631,82 @@ input, textarea {
   from { transform: rotate(0); }
   to { transform: rotate(360deg); }
 }
+.spin { animation: spin 0.8s linear infinite; }
+
+/* Paywall — native IAP plan picker (replaces the old "go to web" copy). */
+.paywall-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+.paywall-error { color: #fca5a5; }
+
+.paywall-plans {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  width: 100%;
+  max-width: 340px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.paywall-plan {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px;
+}
+.paywall-plan-info { min-width: 0; }
+.paywall-plan-name {
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+.paywall-plan-desc {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  line-height: 1.45;
+  margin-top: 2px;
+}
+.paywall-buy {
+  flex-shrink: 0;
+  width: auto;
+  min-width: 92px;
+  padding: 10px 16px;
+  display: inline-grid;
+  place-items: center;
+}
+
+.paywall-restore {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 6px 8px;
+  margin-top: 2px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.paywall-restore:active { color: var(--text); }
+.paywall-restore:disabled { opacity: 0.45; cursor: default; }
+
+.paywall-fineprint {
+  font-size: 11.5px !important;
+  color: var(--text-dim) !important;
+  line-height: 1.5;
+  max-width: 320px;
+}
 
 /* Relay connection badge — tiny pill in the list-screen header. */
 .relay-badge {

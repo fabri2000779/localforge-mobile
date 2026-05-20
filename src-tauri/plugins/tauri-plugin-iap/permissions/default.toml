@@ -1,0 +1,13 @@
+"$schema" = "schemas/schema.json"
+
+# The mobile app needs every IAP command, so the default set enables all
+# three. There's nothing security-sensitive to gate here — the native
+# side talks only to the platform store, and the backend re-verifies
+# every receipt regardless of what the client claims.
+[default]
+description = "Allows listing products, making a purchase, and restoring purchases."
+permissions = [
+    "allow-get-products",
+    "allow-purchase",
+    "allow-restore-purchases",
+]

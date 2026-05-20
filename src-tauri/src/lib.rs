@@ -4,6 +4,7 @@
 //! source of truth for the Tauri builder configuration.
 
 mod auth;
+mod iap;
 mod oauth;
 mod relay;
 mod sync;
@@ -30,6 +31,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_iap::init())
         .manage(std::sync::Arc::new(relay::RelayState::default()))
         .invoke_handler(tauri::generate_handler![
             ping,
@@ -43,6 +45,8 @@ pub fn run() {
             relay::cloud_relay_start,
             relay::cloud_relay_stop,
             relay::cloud_relay_send_cmd,
+            iap::cloud_iap_verify_apple,
+            iap::cloud_iap_verify_google,
         ])
         .setup(|app| {
             tracing::info!(version = env!("CARGO_PKG_VERSION"), "LocalForge mobile starting");

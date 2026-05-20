@@ -12,6 +12,7 @@ import { useEffect, useState } from 'react';
 import {
   ArrowLeft,
   ChevronRight,
+  Loader2,
   Lock,
   RefreshCw,
   ServerCog,
@@ -30,6 +31,15 @@ import {
   type Me,
   type ServerSummary,
 } from '../lib/cloud';
+import {
+  listProducts,
+  purchaseAndVerify,
+  restoreAndVerify,
+  isUserCancelled,
+  isIapError,
+  type Product,
+  type Plan,
+} from '../lib/iap';
 
 /** Per-server live status reported by the owner via state.snapshot
  *  or server.state_changed. Mirrors the desktop's ServerStatus enum. */
@@ -46,6 +56,10 @@ interface Props {
   me: Me;
   onBack: () => void;
   onOpenServer: (server: ServerSummary) => void;
+  /** Called when an IAP purchase/restore upgrades the plan, so the
+   *  parent can refresh the app-wide `me` (and this screen flips out of
+   *  the paywalled state). */
+  onMeUpdated: (me: Me) => void;
 }
 
 type State =
@@ -54,7 +68,7 @@ type State =
   | { kind: 'error'; message: string }
   | { kind: 'ready'; servers: ServerSummary[] };
 
-export function ServerListScreen({ me, onBack, onOpenServer }: Props) {
+export function ServerListScreen({ me, onBack, onOpenServer, onMeUpdated }: Props) {
   // Free-tier users get the paywall card without us even firing the
   // request — the cloud would 402 anyway, no need to round-trip.
   const isPaid = me.subscription.plan !== 'free';
@@ -178,6 +192,15 @@ export function ServerListScreen({ me, onBack, onOpenServer }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // A paywall purchase/restore succeeded: lift the refreshed Me to the
+  // app (which re-renders us with isPaid=true and mounts the relay), and
+  // immediately flip this screen from the paywall to the loading list.
+  function handleUpgraded(updated: Me) {
+    onMeUpdated(updated);
+    setState({ kind: 'loading' });
+    void load();
+  }
+
   return (
     <div className="list-screen">
       <header className="list-header">
@@ -211,7 +234,9 @@ export function ServerListScreen({ me, onBack, onOpenServer }: Props) {
       </header>
 
       {state.kind === 'loading' && <ListLoading />}
-      {state.kind === 'paywalled' && <Paywall plan={me.subscription.plan} />}
+      {state.kind === 'paywalled' && (
+        <Paywall plan={me.subscription.plan} onUpgraded={handleUpgraded} />
+      )}
       {state.kind === 'error' && (
         <ListError message={state.message} onRetry={() => load()} />
       )}
@@ -365,24 +390,162 @@ function ListError({
   );
 }
 
-function Paywall({ plan }: { plan: 'free' | 'hobby' | 'team' }) {
+function Paywall({
+  plan,
+  onUpgraded,
+}: {
+  plan: 'free' | 'hobby' | 'team';
+  onUpgraded: (me: Me) => void;
+}) {
+  // null = still loading the store product list.
+  const [products, setProducts] = useState<Product[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  // Product id currently mid-purchase (drives the per-row spinner).
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [restoring, setRestoring] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    listProducts()
+      .then((p) => {
+        if (alive) setProducts(p);
+      })
+      .catch((e) => {
+        if (alive) setLoadError(paywallErr(e));
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  async function buy(productId: string) {
+    setNotice(null);
+    setBusyId(productId);
+    try {
+      const me = await purchaseAndVerify(productId);
+      onUpgraded(me);
+    } catch (e) {
+      // Backing out of the store sheet isn't an error — stay quiet.
+      if (!isUserCancelled(e)) setNotice(paywallErr(e));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function restore() {
+    setNotice(null);
+    setRestoring(true);
+    try {
+      const me = await restoreAndVerify();
+      if (me && me.subscription.plan !== 'free') {
+        onUpgraded(me);
+      } else {
+        setNotice('No active subscription found to restore.');
+      }
+    } catch (e) {
+      setNotice(paywallErr(e));
+    } finally {
+      setRestoring(false);
+    }
+  }
+
+  const ordered = (products ?? [])
+    .slice()
+    .sort((a, b) => planRank(a.plan) - planRank(b.plan));
+  const busy = busyId !== null || restoring;
+
   return (
     <div className="list-state">
       <div className="empty-mark empty-mark--lock">
         <Lock size={24} />
       </div>
-      <h2>Cloud sync is a paid feature</h2>
+      <h2>Unlock cloud sync</h2>
       <p>
-        Server sync, sub-user access and the audit log unlock with the
-        Hobby plan (€5/mo). The LocalForge desktop app stays free
-        forever for local hosting and remote VPS agents.
+        Server sync, sub-user access and the audit log unlock with a
+        subscription. The LocalForge desktop app stays free forever for
+        local hosting and remote VPS agents.
       </p>
-      <p className="list-state-hint">
-        You're currently on <strong>{plan[0]!.toUpperCase() + plan.slice(1)}</strong>. Upgrade
-        from the desktop app or at <code>localforge.gg/account</code>.
+
+      {products === null && !loadError && (
+        <div className="paywall-loading">
+          <Loader2 size={16} className="spin" /> Loading plans…
+        </div>
+      )}
+
+      {loadError && <p className="list-state-hint paywall-error">{loadError}</p>}
+
+      {products !== null && ordered.length === 0 && !loadError && (
+        <p className="list-state-hint">
+          In-app purchases aren't available on this device.
+        </p>
+      )}
+
+      {ordered.length > 0 && (
+        <ul className="paywall-plans">
+          {ordered.map((p) => (
+            <li key={p.id} className="paywall-plan">
+              <div className="paywall-plan-info">
+                <div className="paywall-plan-name">{planTitle(p.plan)}</div>
+                <div className="paywall-plan-desc">{planBlurb(p.plan)}</div>
+              </div>
+              <button
+                type="button"
+                className="auth-submit paywall-buy"
+                disabled={busy}
+                onClick={() => buy(p.id)}
+              >
+                {busyId === p.id ? (
+                  <Loader2 size={15} className="spin" />
+                ) : (
+                  `${p.displayPrice}/mo`
+                )}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {notice && <p className="list-state-hint paywall-error">{notice}</p>}
+
+      <button
+        type="button"
+        className="paywall-restore"
+        onClick={restore}
+        disabled={busy}
+      >
+        {restoring ? 'Restoring…' : 'Restore purchases'}
+      </button>
+
+      <p className="paywall-fineprint">
+        Subscriptions renew automatically each month until cancelled. Cancel
+        anytime in your device's store account settings. You're currently on{' '}
+        <strong>{plan[0]!.toUpperCase() + plan.slice(1)}</strong>.
       </p>
     </div>
   );
+}
+
+function planRank(p: Plan): number {
+  return p === 'hobby' ? 0 : 1;
+}
+
+function planTitle(p: Plan): string {
+  return p === 'hobby' ? 'Hobby' : 'Team';
+}
+
+function planBlurb(p: Plan): string {
+  return p === 'hobby'
+    ? 'Cloud sync, audit log, and one sub-user seat.'
+    : 'Everything in Hobby, plus team members and roles.';
+}
+
+/** Flatten any of our error shapes (IAP, cloud, plain Error) to a line
+ *  of copy for the paywall. */
+function paywallErr(e: unknown): string {
+  if (isIapError(e)) return e.message || 'Something went wrong with the store.';
+  if (isCloudError(e)) return e.message ?? `Couldn't verify the purchase (${e.code}).`;
+  return e instanceof Error ? e.message : 'Something went wrong.';
 }
 
 // ---------------------------------------------------------------------------

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Required for Google Play Billing. The Billing Library also
+         contributes this via manifest merge, but declaring it here keeps
+         the requirement explicit and independent of the library version. -->
+    <uses-permission android:name="com.android.vending.BILLING" />
+</manifest>
