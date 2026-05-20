@@ -4,13 +4,19 @@ import PackageDescription
 let package = Package(
     name: "tauri-plugin-iap",
     platforms: [
-        // Keep the package floor at iOS 13 to match Tauri's generated
-        // Xcode deployment target — a package can't require a HIGHER
-        // minimum than the app that links it. StoreKit 2 (iOS 15) is
-        // reached only inside `if #available(iOS 15, *)` guards, so it
-        // weak-links cleanly and older devices get a "requires iOS 15"
-        // reject instead of a load failure.
-        .iOS(.v13),
+        // iOS 15 floor — MUST match the app's deployment target
+        // (tauri.conf.json bundle.iOS.minimumSystemVersion = "15.0").
+        //
+        // Why 15 and not 13: below iOS 15 the app links the BACK-DEPLOYED
+        // Swift Concurrency runtime (a copy bundled in the app), and that
+        // copy crashes when a `Task {}` is created from a static library —
+        // __swift_instantiateConcreteTypeFromMangledName, even on iOS 26,
+        // because the deployment target (not the device OS) decides which
+        // concurrency runtime is used. That was the paywall crash. At a
+        // 15.0 floor the OS-native concurrency runtime is used, no
+        // back-deploy lib, no crash. StoreKit 2 also requires iOS 15
+        // anyway, so nothing of value is lost.
+        .iOS(.v15),
     ],
     products: [
         .library(
