@@ -843,7 +843,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1038,7 +1038,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2174,8 +2174,8 @@ checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 
 [[package]]
 name = "localforge-backend-remote"
-version = "0.1.18"
-source = "git+https://github.com/fabri2000779/localforge.git?branch=main#4add89f2e382cd62e1384a5cc6fea26167892f9a"
+version = "0.1.19"
+source = "git+https://github.com/fabri2000779/localforge.git?branch=main#2b6c87765f9c4b1b5b4e5dd060502e27ec8cb8ae"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2198,14 +2198,15 @@ dependencies = [
 
 [[package]]
 name = "localforge-cloud-client"
-version = "0.1.18"
-source = "git+https://github.com/fabri2000779/localforge.git?branch=main#4add89f2e382cd62e1384a5cc6fea26167892f9a"
+version = "0.1.19"
+source = "git+https://github.com/fabri2000779/localforge.git?branch=main#2b6c87765f9c4b1b5b4e5dd060502e27ec8cb8ae"
 dependencies = [
  "aes-gcm",
  "async-trait",
  "base64 0.22.1",
  "rand",
  "reqwest",
+ "rustls",
  "scrypt",
  "serde",
  "serde_json",
@@ -2213,12 +2214,13 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "webpki-roots 1.0.7",
 ]
 
 [[package]]
 name = "localforge-core"
-version = "0.1.18"
-source = "git+https://github.com/fabri2000779/localforge.git?branch=main#4add89f2e382cd62e1384a5cc6fea26167892f9a"
+version = "0.1.19"
+source = "git+https://github.com/fabri2000779/localforge.git?branch=main#2b6c87765f9c4b1b5b4e5dd060502e27ec8cb8ae"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2232,7 +2234,7 @@ dependencies = [
 
 [[package]]
 name = "localforge-mobile"
-version = "0.2.26"
+version = "0.2.27"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2391,7 +2393,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3232,7 +3234,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3290,7 +3292,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4235,7 +4237,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5217,7 +5219,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
