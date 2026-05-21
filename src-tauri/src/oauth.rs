@@ -22,7 +22,6 @@
 //! a real message instead of staring at the spinner forever.
 
 use tauri::AppHandle;
-use tauri_plugin_opener::OpenerExt;
 
 use localforge_cloud_client::{api_origin, oauth as shared};
 
@@ -33,32 +32,44 @@ use localforge_cloud_client::auth as auth_client;
 #[cfg(any(target_os = "android", target_os = "ios"))]
 use tauri::Emitter;
 
-/// Mobile uses an HTTPS Universal Link (iOS) / App Link (Android)
-/// rather than the desktop's `localforge://` custom scheme. The
-/// tauri-plugin-deep-link 2.x mobile config only accepts host+path
-/// shapes — custom schemes on mobile would require hand-editing the
-/// generated AndroidManifest.xml / Info.plist each `init`, which CI
-/// regenerates from scratch.
-///
-/// Cloud `safeRedirect` accepts any URL under `APP_ORIGIN`, so this
-/// path needs no allowlist change — it's already covered.
-///
-/// IMPORTANT: until `.well-known/apple-app-site-association`
-/// (iOS) + `.well-known/assetlinks.json` (Android, with the release
-/// keystore's SHA-256) are published on localforge.gg, the OS won't
-/// automatically route the URL back to the installed app. The OAuth
-/// flow degrades to "user signs in, lands on /auth/mobile-callback
-/// in the browser, manually opens LocalForge". Apple Developer +
-/// Android keystore are tracked in the README v0.3 roadmap.
-const REDIRECT_URI: &str = "https://localforge.gg/auth/mobile-callback";
+/// The OAuth callback target. We use the `localforge://` CUSTOM SCHEME
+/// (not an HTTPS universal/app link) because the mobile flow now runs
+/// through an IN-APP browser:
+///   iOS     → ASWebAuthenticationSession captures this scheme directly
+///             (callbackURLScheme), no deep-link/Universal-Link needed.
+///   Android → Chrome Custom Tabs; the scheme routes back to the warm
+///             MainActivity (intent filter added in CI) → the webauth
+///             plugin's onNewIntent.
+/// Cloud `safeRedirect` already allow-lists the `localforge:` scheme
+/// (it's the desktop deep-link path too), so no cloud change is needed.
+const REDIRECT_URI: &str = "localforge://auth/callback";
 
 #[tauri::command]
 pub async fn cloud_oauth_start(app: AppHandle, provider: String) -> Result<(), String> {
-    let url = shared::start_url(&api_origin(), &provider, REDIRECT_URI)
-        .map_err(|e| e.to_string())?;
-    app.opener()
-        .open_url(url, None::<&str>)
-        .map_err(|e| format!("failed to open browser: {e}"))
+    let url = shared::start_url(&api_origin(), &provider, REDIRECT_URI).map_err(|e| e.to_string())?;
+
+    #[cfg(mobile)]
+    {
+        // In-app browser. Blocks until the user finishes signing in and
+        // the browser redirects to localforge://auth/callback, then we
+        // run the same callback handler the deep-link path used.
+        use tauri_plugin_webauth::WebauthExt;
+        let resp = app
+            .webauth()
+            .authenticate(url.to_string(), "localforge".to_string())
+            .map_err(|e| e.to_string())?;
+        handle_auth_callback(app, resp.url).await;
+        Ok(())
+    }
+    #[cfg(desktop)]
+    {
+        // Desktop preview build: fall back to the system browser (the
+        // real desktop app has its own localforge:// deep-link wiring).
+        use tauri_plugin_opener::OpenerExt;
+        app.opener()
+            .open_url(url, None::<&str>)
+            .map_err(|e| format!("failed to open browser: {e}"))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -75,13 +86,13 @@ pub async fn cloud_oauth_start(app: AppHandle, provider: String) -> Result<(), S
 /// by path. Silent on anything we don't recognise so future schemes
 /// (debug, in-app deep links) don't trigger an error event.
 pub async fn handle_deep_link(app: AppHandle, url: String) {
-    // We accept both the HTTPS Universal-Link shape (the production
-    // path once AASA/assetlinks land) and the legacy localforge://
-    // custom-scheme shape (in case anything still emits it; the cloud
-    // currently only uses the URL we send in redirect_to).
-    if url.starts_with("https://localforge.gg/auth/mobile-callback")
-        || url.starts_with("localforge://auth/callback")
-    {
+    // NOTE: the OAuth callback (localforge://auth/callback) is NOT handled
+    // here anymore — the in-app webauth plugin captures it directly
+    // (ASWebAuthenticationSession on iOS; onNewIntent on Android) and
+    // `cloud_oauth_start` calls `handle_auth_callback` itself. Routing it
+    // here too would double-process. We keep the HTTPS shape only as a
+    // defensive fallback for any web-flow redirect.
+    if url.starts_with("https://localforge.gg/auth/mobile-callback") {
         handle_auth_callback(app, url).await;
         return;
     }

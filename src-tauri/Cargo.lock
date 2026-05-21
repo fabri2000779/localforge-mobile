@@ -2232,7 +2232,7 @@ dependencies = [
 
 [[package]]
 name = "localforge-mobile"
-version = "0.2.24"
+version = "0.2.25"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2249,6 +2249,7 @@ dependencies = [
  "tauri-plugin-deep-link",
  "tauri-plugin-iap",
  "tauri-plugin-opener",
+ "tauri-plugin-webauth",
  "thiserror 2.0.18",
  "tokio",
  "tokio-tungstenite 0.28.0",
@@ -4111,6 +4112,17 @@ dependencies = [
  "url",
  "windows",
  "zbus",
+]
+
+[[package]]
+name = "tauri-plugin-webauth"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-plugin",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

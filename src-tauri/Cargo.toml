@@ -1,6 +1,6 @@
 [package]
 name = "localforge-mobile"
-version = "0.2.24"
+version = "0.2.25"
 description = "LocalForge mobile companion — iOS + Android"
 authors = ["Fabrizio"]
 edition = "2021"
@@ -40,6 +40,12 @@ tauri-plugin-opener = "2"
 # returns is verified by `crate::iap` against the cloud before any plan
 # is granted.
 tauri-plugin-iap = { path = "plugins/tauri-plugin-iap" }
+
+# In-app OAuth browser — ASWebAuthenticationSession (iOS) / Chrome Custom
+# Tabs (Android). Replaces the external-browser + deep-link round-trip
+# (which cold-started + crashed the app on Android) with an in-app sheet
+# that hands the localforge://auth/callback redirect straight back.
+tauri-plugin-webauth = { path = "plugins/tauri-plugin-webauth" }
 
 # Shared crates pulled from the public localforge repo. Cargo walks
 # the repo tree at fetch time, finds the Cargo.toml whose package

@@ -145,6 +145,17 @@ jobs:
           echo "Applied launcher icons to $RES"
           ls "$RES" | grep -i mipmap || true
 
+      # Register the localforge:// OAuth callback scheme + singleTask on
+      # the MainActivity so Chrome Custom Tabs' redirect routes back to the
+      # warm app via onNewIntent (the in-app webauth plugin captures it).
+      - name: Register localforge:// OAuth scheme in the Android manifest
+        run: |
+          MAN=src-tauri/gen/android/app/src/main/AndroidManifest.xml
+          if [ ! -f "$MAN" ]; then MAN=$(find src-tauri/gen/android -name AndroidManifest.xml -path '*main*' | head -1); fi
+          if [ -z "$MAN" ] || [ ! -f "$MAN" ]; then echo "::error::AndroidManifest.xml not found"; exit 1; fi
+          node scripts/patch-android-manifest.cjs "$MAN"
+          grep -n "localforge\|launchMode" "$MAN" | head
+
       # ─── Signing (release only) ──────────────────────────────────
       # Only runs when the build is for a tag. Debug builds use the
       # default debug keystore Android Studio ships.

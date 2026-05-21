@@ -1,0 +1,7 @@
+"$schema" = "schemas/schema.json"
+
+# The OAuth flow is driven from Rust (oauth::cloud_oauth_start), not JS,
+# but we expose the command + default permission for uniformity.
+[default]
+description = "Allows presenting the in-app OAuth browser."
+permissions = ["allow-authenticate"]

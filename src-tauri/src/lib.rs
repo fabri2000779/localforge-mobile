@@ -43,6 +43,7 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_iap::init())
+        .plugin(tauri_plugin_webauth::init())
         .manage(std::sync::Arc::new(relay::RelayState::default()))
         .invoke_handler(tauri::generate_handler![
             ping,

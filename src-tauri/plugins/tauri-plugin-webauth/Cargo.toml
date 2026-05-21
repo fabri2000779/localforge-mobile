@@ -1,0 +1,28 @@
+[package]
+name = "tauri-plugin-webauth"
+version = "0.1.0"
+description = "In-app OAuth browser for LocalForge mobile — ASWebAuthenticationSession (iOS) + Chrome Custom Tabs (Android)"
+edition = "2021"
+rust-version = "1.77.2"
+# tauri-plugin's build helper requires `links` to equal the package name.
+links = "tauri-plugin-webauth"
+
+# A Tauri 2 mobile plugin. Presents the OAuth provider's page in an
+# IN-APP browser (so the user never leaves the app) and hands the
+# `localforge://auth/callback?token=…` redirect back to Rust:
+#   iOS     → ASWebAuthenticationSession (captures the callback scheme
+#             directly, no deep-link round-trip).
+#   Android → Chrome Custom Tabs; the redirect returns to the warm app
+#             via the activity's onNewIntent (no cold-start → no crash,
+#             which is what the old external-browser + App-Link flow hit).
+# Desktop preview builds get a stub that returns `unsupported` (the real
+# desktop app handles its own localforge:// deep link).
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }

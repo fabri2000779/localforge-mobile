@@ -2503,6 +2503,24 @@
           "type": "string",
           "const": "opener:deny-reveal-item-in-dir",
           "markdownDescription": "Denies the reveal_item_in_dir command without any pre-configured scope."
+        },
+        {
+          "description": "Allows presenting the in-app OAuth browser.\n#### This default permission set includes:\n\n- `allow-authenticate`",
+          "type": "string",
+          "const": "webauth:default",
+          "markdownDescription": "Allows presenting the in-app OAuth browser.\n#### This default permission set includes:\n\n- `allow-authenticate`"
+        },
+        {
+          "description": "Enables the authenticate command without any pre-configured scope.",
+          "type": "string",
+          "const": "webauth:allow-authenticate",
+          "markdownDescription": "Enables the authenticate command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the authenticate command without any pre-configured scope.",
+          "type": "string",
+          "const": "webauth:deny-authenticate",
+          "markdownDescription": "Denies the authenticate command without any pre-configured scope."
         }
       ]
     },
