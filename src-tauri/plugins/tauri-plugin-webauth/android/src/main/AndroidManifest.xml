@@ -10,4 +10,31 @@
             <data android:scheme="https" />
         </intent>
     </queries>
+
+    <application>
+        <!-- Receives the localforge://auth/callback OAuth redirect from
+             Chrome Custom Tabs. Deliberately a SEPARATE activity from
+             Tauri's MainActivity: tao 0.35.2 panics (ndk_glue.rs:511,
+             unwrap on a null getType()) on any VIEW intent it processes,
+             and a browser redirect has no MIME type. Catching it here
+             keeps the intent away from tao. The manifest merger folds
+             this into the app's manifest at build time.
+
+             singleTask + the relaunch in onCreate dismiss the Custom Tab
+             and return to the app; noHistory keeps it off the back stack;
+             the translucent theme means no visible flash. -->
+        <activity
+            android:name="gg.localforge.webauth.RedirectActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="localforge" android:host="auth" />
+            </intent-filter>
+        </activity>
+    </application>
 </manifest>
