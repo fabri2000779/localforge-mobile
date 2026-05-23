@@ -1,10 +1,15 @@
 # Android APK / AAB build pipeline.
 #
 # Triggers
-#   - Push to main → unsigned debug APK uploaded as artifact (smoke test
-#     that the workspace still builds after every commit).
 #   - Tag v* push → signed release APK + AAB uploaded as a GitHub
-#     Release asset, ready for Play Console upload.
+#     Release asset + pushed to Play internal testing.
+#   - workflow_dispatch → manual run (release path when dispatched on a
+#     tag ref; unsigned debug APK when dispatched on a branch ref).
+#
+# NOTE: this used to also build on every push to main (an unsigned debug
+# smoke test), but that just doubled up on each release (we push the
+# commit + tag together), so it was dropped. iOS already builds on tags
+# only; Android now matches.
 #
 # Signing
 #   The release path expects three secrets in the repo:
@@ -32,7 +37,6 @@ name: Android
 
 on:
   push:
-    branches: [main]
     tags: ["v*"]
   workflow_dispatch:
 
