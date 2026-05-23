@@ -53,6 +53,17 @@ interface CmdResultEvent {
   error?: string;
 }
 
+/** A single console line forwarded by the owner over the relay. The
+ *  desktop's RelayLogBridge emits these (`kind: 'console_line'`) for
+ *  every local `server-log`; the mobile consumes them directly. */
+interface RelayConsoleEvent {
+  type: 'event';
+  kind: 'console_line';
+  target: string;
+  line: string;
+  ts: number;
+}
+
 /** Hard cap on retained log lines. Mobile WebViews choke on tens of
  *  thousands of DOM nodes — 500 is comfortable, plenty for an "is my
  *  server happy" glance. Older lines drop off the top. */
@@ -106,26 +117,25 @@ export function ServerDetailScreen({ server, onBack, onOpenConfig }: Props) {
   }, []);
 
   // Console tail. Send `server.attach` to the owner so it starts
-  // forwarding console output for THIS server through the relay;
-  // listen for the resulting `server-log` events (RelayLogBridge
-  // re-emits relay console_line frames as local server-log events
-  // on every sub-user so the same xterm wiring works unchanged on
-  // mobile too). Detach on unmount so the relay quiets back down.
+  // forwarding THIS server's console output through the relay as
+  // `console_line` events. Unlike the desktop (whose RelayLogBridge
+  // re-emits them as local `server-log` events for its xterm), the
+  // mobile has no such bridge — it consumes the relay frames directly
+  // here. Detach on unmount so the owner quiets back down.
   useEffect(() => {
     let unsub: UnlistenFn | undefined;
-    listen<{ server_id: string; line: string; ts: number }>(
-      'server-log',
-      (event) => {
-        if (event.payload?.server_id !== server.id) return;
-        setLogs((prev) => {
-          const next = prev.length >= LOG_BUFFER_CAP
-            ? prev.slice(prev.length - LOG_BUFFER_CAP + 1)
-            : prev.slice();
-          next.push({ ts: event.payload.ts, line: event.payload.line });
-          return next;
-        });
-      },
-    ).then((u) => {
+    listen<RelayConsoleEvent>('cloud://relay-event', (event) => {
+      const m = event.payload;
+      if (m?.kind !== 'console_line') return;
+      if (m.target !== server.id) return;
+      setLogs((prev) => {
+        const next = prev.length >= LOG_BUFFER_CAP
+          ? prev.slice(prev.length - LOG_BUFFER_CAP + 1)
+          : prev.slice();
+        next.push({ ts: m.ts, line: m.line });
+        return next;
+      });
+    }).then((u) => {
       unsub = u;
     });
 

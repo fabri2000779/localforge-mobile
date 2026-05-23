@@ -19,9 +19,7 @@ import {
   WifiOff,
 } from 'lucide-react';
 import {
-  cloudRelayStart,
   cloudRelaySendCmd,
-  cloudRelayStop,
   cloudServersList,
   isCloudError,
   subscribeRelayConnected,
@@ -140,15 +138,29 @@ export function ServerListScreen({ me, onBack, onOpenServer, onMeUpdated }: Prop
     }).then((u) => {
       unsubEvent = u;
     });
-    cloudRelayStart().catch((e) => {
-      console.warn('relay start failed', e);
-      setRelayStatus('disconnected');
-    });
+    // The relay is started once at the app root (App.tsx) and stays up
+    // across navigation, so by the time this screen mounts it's very
+    // likely already connected — meaning the `relay-connected` event
+    // already fired and the handler above won't run again. Send an
+    // initial snapshot best-effort to populate the status badges now; if
+    // the relay isn't connected yet this no-ops and the connected handler
+    // covers it.
+    void cloudRelaySendCmd({
+      type: 'cmd',
+      cmd: 'state.snapshot',
+      request_id: crypto.randomUUID(),
+    })
+      .then(() => setRelayStatus('connected'))
+      .catch(() => {
+        /* relay not up yet — the relay-connected handler will fire it */
+      });
     return () => {
       unsubConnected?.();
       unsubDisconnected?.();
       unsubEvent?.();
-      void cloudRelayStop();
+      // Relay lifecycle is owned by App.tsx now — do NOT stop it here, or
+      // navigating into a server would kill the connection the detail
+      // screen needs to send commands.
     };
   }, [isPaid]);
 

@@ -15,7 +15,13 @@ import { HomeScreen } from './components/HomeScreen';
 import { ServerListScreen } from './components/ServerListScreen';
 import { ServerDetailScreen } from './components/ServerDetailScreen';
 import { ServerConfigScreen } from './components/ServerConfigScreen';
-import { cloudMe, type Me, type ServerSummary } from './lib/cloud';
+import {
+  cloudMe,
+  cloudRelayStart,
+  cloudRelayStop,
+  type Me,
+  type ServerSummary,
+} from './lib/cloud';
 import { useSwipeBack } from './lib/useSwipeBack';
 import './App.css';
 
@@ -50,6 +56,27 @@ function App() {
         setState({ kind: 'signed-out' });
       });
   }, []);
+
+  // Relay lifecycle lives here, at the app root, so the WebSocket
+  // survives navigation between the server list, detail and config
+  // screens. It used to be owned by ServerListScreen, which stopped it
+  // on unmount — meaning the moment you tapped a server (unmounting the
+  // list to show the detail) the relay died, and every command the
+  // detail screen tried to send hit a dead socket. Paid users only;
+  // started when we have a paid session, torn down on sign-out (or when
+  // the signed-in user changes). Keyed on the user id so a benign `me`
+  // refresh (same user, still paid) doesn't churn the connection.
+  const relayUserId =
+    state.kind === 'signed-in' && state.me.subscription.plan !== 'free'
+      ? state.me.id
+      : null;
+  useEffect(() => {
+    if (!relayUserId) return;
+    void cloudRelayStart().catch((e) => console.warn('relay start failed', e));
+    return () => {
+      void cloudRelayStop();
+    };
+  }, [relayUserId]);
 
   // One step "back" through the signed-in routes: server → servers →
   // home. Functional update so the callback is stable (no `state` dep)
