@@ -8,6 +8,7 @@ mod iap;
 mod oauth;
 mod relay;
 mod sync;
+mod vault;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -54,6 +55,9 @@ pub fn run() {
             auth::cloud_request_password_reset,
             oauth::cloud_oauth_start,
             sync::cloud_servers_list,
+            sync::cloud_server_config,
+            vault::cloud_sync_key_unlock,
+            vault::cloud_sync_key_status,
             relay::cloud_relay_start,
             relay::cloud_relay_stop,
             relay::cloud_relay_send_cmd,

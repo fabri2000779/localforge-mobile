@@ -21,6 +21,7 @@ import {
   Hash,
   Play,
   RefreshCcw,
+  SlidersHorizontal,
   Square,
   Terminal,
 } from 'lucide-react';
@@ -33,6 +34,7 @@ import {
 interface Props {
   server: ServerSummary;
   onBack: () => void;
+  onOpenConfig: () => void;
 }
 
 type Action = 'start' | 'stop' | 'restart';
@@ -61,7 +63,7 @@ interface LogLine {
   line: string;
 }
 
-export function ServerDetailScreen({ server, onBack }: Props) {
+export function ServerDetailScreen({ server, onBack, onOpenConfig }: Props) {
   const [pending, setPending] = useState<Action | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
   const [logs, setLogs] = useState<LogLine[]>([]);
@@ -258,6 +260,20 @@ export function ServerDetailScreen({ server, onBack }: Props) {
             onClick={() => fire('restart')}
           />
         </div>
+      </section>
+
+      <section className="card action-card">
+        <div className="action-card-header">
+          <h2>Configuration</h2>
+          <p>
+            View and edit this server’s game settings. Changes are applied
+            on your desktop over the relay and re-synced back.
+          </p>
+        </div>
+        <button type="button" className="cfg-btn" onClick={onOpenConfig}>
+          <SlidersHorizontal size={15} />
+          Edit configuration
+        </button>
       </section>
 
       <section className="card console-card">

@@ -14,6 +14,7 @@ import { LoginScreen } from './components/LoginScreen';
 import { HomeScreen } from './components/HomeScreen';
 import { ServerListScreen } from './components/ServerListScreen';
 import { ServerDetailScreen } from './components/ServerDetailScreen';
+import { ServerConfigScreen } from './components/ServerConfigScreen';
 import { cloudMe, type Me, type ServerSummary } from './lib/cloud';
 import { useSwipeBack } from './lib/useSwipeBack';
 import './App.css';
@@ -21,7 +22,8 @@ import './App.css';
 type Route =
   | { kind: 'home' }
   | { kind: 'servers' }
-  | { kind: 'server'; server: ServerSummary };
+  | { kind: 'server'; server: ServerSummary }
+  | { kind: 'config'; server: ServerSummary };
 
 type State =
   | { kind: 'loading' }
@@ -56,6 +58,8 @@ function App() {
   const goBack = useCallback(() => {
     setState((s) => {
       if (s.kind !== 'signed-in') return s;
+      if (s.route.kind === 'config')
+        return { ...s, route: { kind: 'server', server: s.route.server } };
       if (s.route.kind === 'server') return { ...s, route: { kind: 'servers' } };
       if (s.route.kind === 'servers') return { ...s, route: { kind: 'home' } };
       return s; // home is the root — nothing to pop
@@ -120,13 +124,25 @@ function App() {
             onMeUpdated={(me) => setState({ ...s, me })}
           />
         );
-      case 'server':
+      case 'server': {
+        const server = s.route.server;
         return (
           <ServerDetailScreen
-            server={s.route.server}
+            server={server}
             onBack={() => setState({ ...s, route: { kind: 'servers' } })}
+            onOpenConfig={() => setState({ ...s, route: { kind: 'config', server } })}
           />
         );
+      }
+      case 'config': {
+        const server = s.route.server;
+        return (
+          <ServerConfigScreen
+            server={server}
+            onBack={() => setState({ ...s, route: { kind: 'server', server } })}
+          />
+        );
+      }
     }
   }
 }

@@ -915,3 +915,91 @@ input, textarea {
   from { opacity: 0; transform: translate(-50%, 8px); }
   to { opacity: 1; transform: translate(-50%, 0); }
 }
+
+/* ── Server config viewer / editor (ServerConfigScreen) ──────────── */
+.cfg-notice {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 8px;
+  padding: 28px 22px;
+  color: #cbd5e1;
+}
+.cfg-notice h2 {
+  font-size: 15px;
+  font-weight: 600;
+  color: #f1f5f9;
+  margin: 4px 0 0;
+}
+.cfg-notice p {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #94a3b8;
+  margin: 0;
+  max-width: 320px;
+}
+.cfg-notice > svg { color: #818cf8; }
+
+.cfg-fields { display: flex; flex-direction: column; gap: 12px; }
+.cfg-field { display: flex; flex-direction: column; gap: 5px; }
+.cfg-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: #94a3b8;
+  word-break: break-all;
+}
+.cfg-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border-radius: 9px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(15, 23, 42, 0.6);
+  color: #f1f5f9;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.cfg-input:focus { border-color: #6366f1; }
+
+.cfg-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 11px 16px;
+  border: none;
+  border-radius: 10px;
+  background: #4f46e5;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+}
+.cfg-btn:hover:not(:disabled) { background: #4338ca; }
+.cfg-btn:disabled { opacity: 0.5; cursor: default; }
+.cfg-btn.cfg-save { width: 100%; margin-top: 2px; }
+
+.cfg-err { font-size: 12px; color: #f87171; }
+.cfg-empty { font-size: 12.5px; color: #94a3b8; margin: 0; }
+
+.cfg-toast {
+  padding: 10px 13px;
+  border-radius: 9px;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+.cfg-toast-ok {
+  background: rgba(16, 185, 129, 0.14);
+  color: #6ee7b7;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+.cfg-toast-err {
+  background: rgba(239, 68, 68, 0.14);
+  color: #fca5a5;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
