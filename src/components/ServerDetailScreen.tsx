@@ -10,8 +10,13 @@
  *
  * Buttons work optimistically: every action is allowed and the result
  * (a `cmd_result` event) is surfaced as a toast after the owner runs it.
- * Live container state badges live on the list screen; per-server live
- * console is wired below via `server.attach` → `server-log` events.
+ *
+ * Console: on open we resolve the server's nodeId (from its decrypted
+ * config) so commands route to the right host, request the recent
+ * backlog (`server.logs` → `logs_snapshot`), and start the live stream
+ * (`server.attach` → `console_line`). A `server.state_changed` to
+ * stopped/crashed clears the console, mirroring the desktop. The input
+ * sends `server.send_command` to the running server.
  *
  * File manager is the one piece still out of scope on mobile.
  */
@@ -21,6 +26,7 @@ import {
   Hash,
   Play,
   RefreshCcw,
+  Send,
   SlidersHorizontal,
   Square,
   Terminal,
@@ -28,6 +34,7 @@ import {
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import {
   cloudRelaySendCmd,
+  cloudServerConfig,
   type ServerSummary,
 } from '../lib/cloud';
 
@@ -64,6 +71,26 @@ interface RelayConsoleEvent {
   ts: number;
 }
 
+/** The recent console backlog the owner returns in response to our
+ *  `server.logs` request — the last N lines as of when we opened the
+ *  screen, so the console isn't blank until the next live line arrives. */
+interface LogsSnapshotEvent {
+  type: 'event';
+  kind: 'logs_snapshot';
+  request_id: string;
+  target: string;
+  lines: string[];
+}
+
+/** Owner-broadcast status transition. Used to clear the console when the
+ *  server stops or crashes, mirroring the desktop. */
+interface StateChangedEvent {
+  type: 'event';
+  kind: 'server.state_changed';
+  target: string;
+  status: string;
+}
+
 /** Hard cap on retained log lines. Mobile WebViews choke on tens of
  *  thousands of DOM nodes — 500 is comfortable, plenty for an "is my
  *  server happy" glance. Older lines drop off the top. */
@@ -85,6 +112,13 @@ export function ServerDetailScreen({ server, onBack, onOpenConfig }: Props) {
   // otherwise overwrite the toast.
   const awaitingId = useRef<string | null>(null);
   const logViewportRef = useRef<HTMLDivElement | null>(null);
+  // The server's node id, resolved from its (decrypted) config so every
+  // command routes to the right Docker host (local vs a remote agent).
+  // Null until resolved, or if the sync key is locked — in which case we
+  // omit it and the owner defaults to 'local'.
+  const nodeIdRef = useRef<string | null>(null);
+  // Console command input (e.g. a Minecraft `say hi` / `stop`).
+  const [cmdInput, setCmdInput] = useState('');
 
   // Toast self-dismiss after 3s. Cleared on unmount + every new toast.
   useEffect(() => {
@@ -116,47 +150,87 @@ export function ServerDetailScreen({ server, onBack, onOpenConfig }: Props) {
     };
   }, []);
 
-  // Console tail. Send `server.attach` to the owner so it starts
-  // forwarding THIS server's console output through the relay as
-  // `console_line` events. Unlike the desktop (whose RelayLogBridge
-  // re-emits them as local `server-log` events for its xterm), the
-  // mobile has no such bridge — it consumes the relay frames directly
-  // here. Detach on unmount so the owner quiets back down.
+  // Console. Resolve the node id first (so commands target the right
+  // host), then ask the owner for the recent backlog (`server.logs`)
+  // AND start the live stream (`server.attach`). One listener handles
+  // three owner-emitted event kinds for THIS server:
+  //   - logs_snapshot         the recent backlog (seeds the buffer)
+  //   - console_line          a new live line (appended)
+  //   - server.state_changed  clear the console when the server stops /
+  //                           crashes, mirroring the desktop
+  // Detach on unmount so the owner quiets back down.
   useEffect(() => {
     let unsub: UnlistenFn | undefined;
-    listen<RelayConsoleEvent>('cloud://relay-event', (event) => {
-      const m = event.payload;
-      if (m?.kind !== 'console_line') return;
-      if (m.target !== server.id) return;
-      setLogs((prev) => {
-        const next = prev.length >= LOG_BUFFER_CAP
-          ? prev.slice(prev.length - LOG_BUFFER_CAP + 1)
-          : prev.slice();
-        next.push({ ts: m.ts, line: m.line });
-        return next;
-      });
-    }).then((u) => {
-      unsub = u;
+    let cancelled = false;
+
+    listen<LogsSnapshotEvent | RelayConsoleEvent | StateChangedEvent>(
+      'cloud://relay-event',
+      (event) => {
+        const m = event.payload;
+        if (!m || m.target !== server.id) return;
+        if (m.kind === 'logs_snapshot') {
+          // Seed the buffer with the backlog. get_server_logs returns up
+          // to "now", so a live line racing in is already included.
+          const lines = Array.isArray(m.lines) ? m.lines : [];
+          const start = Math.max(0, lines.length - LOG_BUFFER_CAP);
+          setLogs(lines.slice(start).map((line) => ({ ts: Date.now(), line })));
+        } else if (m.kind === 'console_line') {
+          setLogs((prev) => {
+            const next = prev.length >= LOG_BUFFER_CAP
+              ? prev.slice(prev.length - LOG_BUFFER_CAP + 1)
+              : prev.slice();
+            next.push({ ts: m.ts, line: m.line });
+            return next;
+          });
+        } else if (m.kind === 'server.state_changed') {
+          if (m.status === 'stopped' || m.status === 'crashed') {
+            setLogs([]);
+          }
+        }
+      },
+    ).then((u) => {
+      if (cancelled) u(); else unsub = u;
     });
 
-    // Fire attach. Best-effort — if the relay isn't connected yet
-    // the user sees "(waiting for connection)" until they reconnect.
-    void cloudRelaySendCmd({
-      type: 'cmd',
-      cmd: 'server.attach',
-      request_id: crypto.randomUUID(),
-      target: server.id,
-    });
+    // Resolve nodeId from the decrypted config, then attach + request the
+    // backlog with it. If the sync key is locked we proceed without one
+    // (the owner defaults to 'local').
+    void (async () => {
+      try {
+        const cfg = await cloudServerConfig(server.id);
+        nodeIdRef.current = cfg.nodeId ?? null;
+      } catch {
+        nodeIdRef.current = null;
+      }
+      if (cancelled) return;
+      void cloudRelaySendCmd({
+        type: 'cmd',
+        cmd: 'server.logs',
+        request_id: crypto.randomUUID(),
+        target: server.id,
+        args: relayArgs({ lines: 200 }),
+      });
+      void cloudRelaySendCmd({
+        type: 'cmd',
+        cmd: 'server.attach',
+        request_id: crypto.randomUUID(),
+        target: server.id,
+        args: relayArgs(),
+      });
+    })();
 
     return () => {
+      cancelled = true;
       unsub?.();
       void cloudRelaySendCmd({
         type: 'cmd',
         cmd: 'server.detach',
         request_id: crypto.randomUUID(),
         target: server.id,
+        args: relayArgs(),
       });
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [server.id]);
 
   // Auto-scroll to bottom whenever a new line lands. useLayoutEffect
@@ -172,6 +246,13 @@ export function ServerDetailScreen({ server, onBack, onOpenConfig }: Props) {
     }
   }, [logs]);
 
+  // Build the args object for a relay cmd, stamping the resolved nodeId
+  // when we have one so the owner routes to the right host. Omitted →
+  // the owner defaults to 'local'.
+  function relayArgs(extra: Record<string, unknown> = {}): Record<string, unknown> {
+    return nodeIdRef.current ? { nodeId: nodeIdRef.current, ...extra } : extra;
+  }
+
   async function fire(action: Action) {
     if (pending) return;
     setPending(action);
@@ -184,9 +265,7 @@ export function ServerDetailScreen({ server, onBack, onOpenConfig }: Props) {
         cmd: `server.${action}`,
         request_id: requestId,
         target: server.id,
-        // nodeId default to 'local' on the receiving side; we don't
-        // know the node from here in v0.1.x, which is fine for
-        // single-node hobby setups.
+        args: relayArgs(),
       });
     } catch (e) {
       awaitingId.current = null;
@@ -199,6 +278,36 @@ export function ServerDetailScreen({ server, onBack, onOpenConfig }: Props) {
             : "Couldn't send command — is the relay connected?",
       });
     }
+  }
+
+  // Send a console command to the running server (e.g. `say hi`, `stop`).
+  // Forwarded to the owner as `server.send_command`; the server's own
+  // echo comes back through the live `console_line` stream. We optimistically
+  // echo the typed line so it shows immediately.
+  function sendConsoleCommand(e: React.FormEvent) {
+    e.preventDefault();
+    const command = cmdInput.trim();
+    if (!command) return;
+    setCmdInput('');
+    setLogs((prev) => {
+      const next = prev.length >= LOG_BUFFER_CAP
+        ? prev.slice(prev.length - LOG_BUFFER_CAP + 1)
+        : prev.slice();
+      next.push({ ts: Date.now(), line: `> ${command}` });
+      return next;
+    });
+    void cloudRelaySendCmd({
+      type: 'cmd',
+      cmd: 'server.send_command',
+      request_id: crypto.randomUUID(),
+      target: server.id,
+      args: relayArgs({ command }),
+    }).catch(() => {
+      setToast({
+        kind: 'err',
+        text: "Couldn't send command — is the relay connected?",
+      });
+    });
   }
 
   return (
@@ -295,9 +404,9 @@ export function ServerDetailScreen({ server, onBack, onOpenConfig }: Props) {
         <div ref={logViewportRef} className="console-viewport" role="log">
           {logs.length === 0 ? (
             <div className="console-empty">
-              Waiting for output. The owner forwards console lines once
-              the server actually emits any — start the server (or push a
-              command) to see live output here.
+              No output yet. Recent logs load when you open a running
+              server, and new lines stream in live. Send a command below
+              to interact with it.
             </div>
           ) : (
             logs.map((l, i) => (
@@ -307,6 +416,27 @@ export function ServerDetailScreen({ server, onBack, onOpenConfig }: Props) {
             ))
           )}
         </div>
+        <form className="console-input" onSubmit={sendConsoleCommand}>
+          <input
+            type="text"
+            value={cmdInput}
+            onChange={(e) => setCmdInput(e.target.value)}
+            placeholder="Type a command…"
+            autoCapitalize="off"
+            autoCorrect="off"
+            autoComplete="off"
+            spellCheck={false}
+            aria-label="Server console command"
+          />
+          <button
+            type="submit"
+            className="console-send"
+            disabled={!cmdInput.trim()}
+            aria-label="Send command"
+          >
+            <Send size={15} />
+          </button>
+        </form>
       </section>
 
       {toast && (
