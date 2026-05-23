@@ -1,6 +1,6 @@
 [package]
 name = "localforge-mobile"
-version = "0.2.28"
+version = "0.2.29"
 description = "LocalForge mobile companion — iOS + Android"
 authors = ["Fabrizio"]
 edition = "2021"
@@ -90,6 +90,13 @@ rand = "0.9"
 # `rustls::crypto::ring::default_provider()`. `ring` is the most
 # reliable rustls provider on iOS/Android.
 rustls = { version = "0.23", features = ["ring"] }
+
+# Bundled Mozilla roots for the relay WebSocket's explicit TLS connector
+# (see relay.rs). tokio-tungstenite's default `connect_async` TLS path
+# fails to establish the WSS connection on iOS — same class of issue as
+# reqwest's default verifier — so we hand the relay WS a known-good
+# rustls config (webpki roots + ring), exactly like the cloud HTTP client.
+webpki-roots = "1"
 
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

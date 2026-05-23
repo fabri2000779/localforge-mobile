@@ -87,6 +87,8 @@ pub async fn cloud_relay_start(
     let app_for_loop = app.clone();
     tauri::async_runtime::spawn(async move {
         let mut backoff = Backoff::new();
+        // Build the relay's TLS connector once; reused on every reconnect.
+        let connector = relay_tls_connector();
 
         loop {
             // Stop signal? Wrap try_recv in a match because oneshot
@@ -115,7 +117,17 @@ pub async fn cloud_relay_start(
             );
 
             tracing::debug!("[relay] connecting");
-            match tokio_tungstenite::connect_async(&url).await {
+            // Hand tokio-tungstenite an explicit rustls connector. Its
+            // default `connect_async` TLS path didn't establish the WSS
+            // connection on iOS (the upgrade never reached the cloud).
+            match tokio_tungstenite::connect_async_tls_with_config(
+                &url,
+                None,
+                false,
+                Some(connector.clone()),
+            )
+            .await
+            {
                 Ok((mut ws, _)) => {
                     backoff.reset();
                     let _ = app_for_loop.emit("cloud://relay-connected", ());
@@ -251,6 +263,28 @@ fn urlencoded(s: &str) -> String {
         }
     }
     out
+}
+
+/// Build the rustls connector for the relay WebSocket: bundled Mozilla
+/// webpki roots + the ring provider, handed explicitly to
+/// tokio-tungstenite via `connect_async_tls_with_config`.
+///
+/// Why not the default `connect_async`: on iOS its built-in TLS setup
+/// failed to bring up the WSS connection (the upgrade never reached the
+/// cloud, so the mobile saw servers via HTTP sync but got no relay logs
+/// or control). This mirrors the explicit webpki+ring config the cloud
+/// HTTP client uses, which works reliably on every platform.
+fn relay_tls_connector() -> tokio_tungstenite::Connector {
+    // Idempotent: the process-default provider is installed at startup
+    // in lib.rs; this is a harmless no-op if so.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
+    let mut roots = rustls::RootCertStore::empty();
+    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    let config = rustls::ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    tokio_tungstenite::Connector::Rustls(std::sync::Arc::new(config))
 }
 
 // ---------------------------------------------------------------------------
