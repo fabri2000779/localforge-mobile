@@ -109,26 +109,23 @@ pub async fn cloud_relay_start(
                 }
             };
 
+            let origin = api_origin();
+            let host = ws_host(&origin);
             let url = format!(
                 "wss://{}/v1/relay/{}?token={}",
-                ws_host(&api_origin()),
+                host,
                 org_id,
                 urlencoded(&token),
             );
 
-            tracing::debug!("[relay] connecting");
-            // Hand tokio-tungstenite an explicit rustls connector. Its
-            // default `connect_async` TLS path didn't establish the WSS
-            // connection on iOS (the upgrade never reached the cloud).
-            match tokio_tungstenite::connect_async_tls_with_config(
-                &url,
-                None,
-                false,
-                Some(connector.clone()),
-            )
-            .await
-            {
-                Ok((mut ws, _)) => {
+            // Staged, time-boxed connect (see `connect_relay`). The
+            // one-shot `connect_async_tls_with_config` hung forever on
+            // mobile — `[relay] connecting` logged, then silence: no
+            // error, no success, no timeout. `connect_relay` bounds each
+            // stage so a stuck path errors + retries, and logs which
+            // stage (DNS / TCP / TLS+upgrade) stalls.
+            match connect_relay(&url, &host, &connector).await {
+                Ok(mut ws) => {
                     backoff.reset();
                     let _ = app_for_loop.emit("cloud://relay-connected", ());
 
@@ -285,6 +282,93 @@ fn relay_tls_connector() -> tokio_tungstenite::Connector {
         .with_root_certificates(roots)
         .with_no_client_auth();
     tokio_tungstenite::Connector::Rustls(std::sync::Arc::new(config))
+}
+
+/// Per-stage budget for a single relay connect attempt. Without a bound,
+/// the connect could hang forever on a half-open network path — exactly
+/// what we observed on mobile (`connecting` logged, then permanent
+/// silence). A bounded attempt turns that into an error the reconnect
+/// loop retries with backoff.
+const CONNECT_STAGE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// What a fully-established relay connection looks like: a WS stream over
+/// a (TLS-wrapped) TCP socket. Same concrete type the old one-shot
+/// `connect_async_tls_with_config` produced, so the read/write loop is
+/// unchanged.
+type RelayWs =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+/// Staged, instrumented relay connect: DNS → TCP → TLS + WS upgrade,
+/// each step logged and wrapped in `CONNECT_STAGE_TIMEOUT`.
+///
+/// Why not the one-shot `tokio_tungstenite::connect_async_tls_with_config`:
+/// on mobile that call hung indefinitely with no error, no success, and
+/// no timeout, so the reconnect loop never even got to back off + retry —
+/// the relay was simply dead (servers visible via HTTP sync, but no logs
+/// and no control). Splitting the connect does two things:
+///   1. No stage can stall the loop forever; a stuck path errors and we
+///      retry on the normal backoff schedule.
+///   2. The per-stage logs pinpoint *where* it stalls (name resolution
+///      vs TCP reachability vs the TLS/upgrade handshake) — invisible
+///      with the opaque one-shot call.
+async fn connect_relay(
+    url: &str,
+    host: &str,
+    connector: &tokio_tungstenite::Connector,
+) -> Result<RelayWs, String> {
+    use tokio::time::timeout;
+
+    // --- DNS. Log every resolved address so an IPv4/IPv6 split (a common
+    // mobile-network stall) is visible.
+    tracing::debug!("[relay] resolving {host}:443");
+    let addrs: Vec<std::net::SocketAddr> =
+        timeout(CONNECT_STAGE_TIMEOUT, tokio::net::lookup_host((host, 443u16)))
+            .await
+            .map_err(|_| format!("dns timeout for {host}"))?
+            .map_err(|e| format!("dns error for {host}: {e}"))?
+            .collect();
+    if addrs.is_empty() {
+        return Err(format!("dns returned no addresses for {host}"));
+    }
+    tracing::debug!("[relay] resolved {} addr(s): {:?}", addrs.len(), addrs);
+
+    // --- TCP. Try resolved addresses in order; first to connect wins.
+    let mut tcp = None;
+    let mut last_err = String::from("no addresses tried");
+    for addr in &addrs {
+        tracing::debug!("[relay] tcp connect {addr}");
+        match timeout(CONNECT_STAGE_TIMEOUT, tokio::net::TcpStream::connect(addr)).await {
+            Ok(Ok(s)) => {
+                tracing::debug!("[relay] tcp connected {addr}");
+                tcp = Some(s);
+                break;
+            }
+            Ok(Err(e)) => {
+                last_err = format!("tcp {addr}: {e}");
+                tracing::warn!("[relay] {last_err}");
+            }
+            Err(_) => {
+                last_err = format!("tcp timeout {addr}");
+                tracing::warn!("[relay] {last_err}");
+            }
+        }
+    }
+    let tcp = tcp.ok_or(last_err)?;
+    let _ = tcp.set_nodelay(true);
+
+    // --- TLS handshake + WS upgrade over the socket we just opened,
+    // using the explicit webpki + ring connector. `url` carries the host
+    // so tokio-tungstenite derives the correct SNI / Host header.
+    tracing::debug!("[relay] tls + ws upgrade");
+    let (ws, _resp) = timeout(
+        CONNECT_STAGE_TIMEOUT,
+        tokio_tungstenite::client_async_tls_with_config(url, tcp, None, Some(connector.clone())),
+    )
+    .await
+    .map_err(|_| "tls/ws upgrade timeout".to_string())?
+    .map_err(|e| format!("tls/ws upgrade: {e}"))?;
+    tracing::debug!("[relay] ws established");
+    Ok(ws)
 }
 
 // ---------------------------------------------------------------------------
