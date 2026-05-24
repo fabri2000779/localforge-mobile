@@ -14,9 +14,11 @@
  * Console: on open we resolve the server's nodeId (from its decrypted
  * config) so commands route to the right host, request the recent
  * backlog (`server.logs` → `logs_snapshot`), and start the live stream
- * (`server.attach` → `console_line`). A `server.state_changed` to
- * stopped/crashed clears the console, mirroring the desktop. The input
- * sends `server.send_command` to the running server.
+ * (`server.attach` → `console_line`). When `server.state_changed` reports
+ * stopped/crashed we keep the console populated and re-pull the backlog,
+ * so a crash-on-boot's last output (the reason it died) stays visible for
+ * diagnosis rather than vanishing. The input sends `server.send_command`
+ * to the running server (disabled while stopped).
  *
  * File manager is the one piece still out of scope on mobile.
  */
@@ -235,8 +237,14 @@ export function ServerDetailScreen({ server, initialStatus, desktopOnline, onlin
           const st = m.status as ServerStatus;
           setStatus(st);
           if (st === 'stopped' || st === 'crashed') {
-            // Server went down → clear the console, mirroring the desktop.
-            setLogs([]);
+            // Server went down. Keep what's on screen and pull the final
+            // backlog — a crash-on-boot's last output is exactly what the
+            // user needs to see (e.g. a permissions or port error), so we
+            // do NOT clear the console here.
+            void cloudRelaySendCmd({
+              type: 'cmd', cmd: 'server.logs', request_id: crypto.randomUUID(),
+              target: server.id, args: relayArgs({ lines: 200 }),
+            });
           } else if (st === 'running' || st === 'starting') {
             // (Re)started — re-attach so the fresh container's output
             // streams, and pull its current backlog.
@@ -545,22 +553,33 @@ export function ServerDetailScreen({ server, initialStatus, desktopOnline, onlin
               nothing to control or stream right now. Open it and it’ll
               reconnect here automatically.
             </div>
-          ) : consoleMode === 'stopped' ? (
-            <div className="console-empty">
-              Server is {status === 'crashed' ? 'crashed' : 'stopped'}. Start it
-              to see live console output.
-            </div>
           ) : logs.length === 0 ? (
-            <div className="console-empty">
-              No output yet. Recent logs load when you open a running server,
-              and new lines stream in live.
-            </div>
-          ) : (
-            logs.map((l, i) => (
-              <div key={i} className="console-line">
-                {l.line}
+            consoleMode === 'stopped' ? (
+              <div className="console-empty">
+                Server is {status === 'crashed' ? 'crashed' : 'stopped'} and
+                left no output. Start it to see live console output.
               </div>
-            ))
+            ) : (
+              <div className="console-empty">
+                No output yet. Recent logs load when you open a running server,
+                and new lines stream in live.
+              </div>
+            )
+          ) : (
+            <>
+              {consoleMode === 'stopped' && (
+                <div className="console-banner">
+                  Server is {status === 'crashed' ? 'crashed' : 'stopped'} —
+                  showing its last output
+                  {status === 'crashed' ? ' (this is why it stopped)' : ''}.
+                </div>
+              )}
+              {logs.map((l, i) => (
+                <div key={i} className="console-line">
+                  {l.line}
+                </div>
+              ))}
+            </>
           )}
         </div>
         <form className="console-input" onSubmit={sendConsoleCommand}>

@@ -911,6 +911,20 @@ input, textarea {
   color: var(--text-muted);
   line-height: 1.5;
 }
+/* Shown above the retained log backlog when a server is stopped/crashed,
+   so it's clear the output is the last thing it printed (e.g. why it
+   died) rather than a live stream. */
+.console-banner {
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 12px;
+  color: #fcd34d;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.22);
+  border-radius: 8px;
+  padding: 7px 10px;
+  margin-bottom: 10px;
+  line-height: 1.45;
+}
 .console-input {
   display: flex;
   align-items: center;
