@@ -103,6 +103,12 @@ export interface ServerSummary {
   id: string;
   name: string;
   updatedAt: number;
+  /** Set ONLY for servers discovered live on an enrolled agent node over
+   *  the relay (not cloud-synced). Carries the node_id they run on so the
+   *  detail screen routes commands straight to that agent instead of doing
+   *  a cloud-config lookup (which doesn't exist for agent-only servers).
+   *  Undefined for normal cloud-synced servers. */
+  nodeId?: string;
 }
 
 export function cloudServersList(): Promise<ServerSummary[]> {

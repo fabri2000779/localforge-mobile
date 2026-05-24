@@ -211,6 +211,7 @@ function App() {
         return (
           <ServerListScreen
             me={s.me}
+            onlineNodeIds={onlineNodeIds}
             onBack={() => setState({ ...s, route: { kind: 'home' } })}
             onOpenServer={(server, status) =>
               setState({ ...s, route: { kind: 'server', server, status } })

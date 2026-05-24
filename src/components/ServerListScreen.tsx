@@ -7,7 +7,7 @@
  * (running / stopped / crashed …). Tapping a row opens the detail screen
  * with start/stop/restart controls and a live console.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft,
   ChevronRight,
@@ -51,6 +51,11 @@ export type ServerStatus =
 
 interface Props {
   me: Me;
+  /** node_ids of enrolled agents currently connected to the relay. We
+   *  query each for its server list and merge those into the displayed
+   *  list — agent-hosted servers aren't cloud-synced, so this is the only
+   *  way they show up on the phone. */
+  onlineNodeIds: Set<string>;
   onBack: () => void;
   onOpenServer: (server: ServerSummary, status?: ServerStatus) => void;
   /** Called when an IAP purchase/restore upgrades the plan, so the
@@ -65,7 +70,7 @@ type State =
   | { kind: 'error'; message: string }
   | { kind: 'ready'; servers: ServerSummary[] };
 
-export function ServerListScreen({ me, onBack, onOpenServer, onMeUpdated }: Props) {
+export function ServerListScreen({ me, onlineNodeIds, onBack, onOpenServer, onMeUpdated }: Props) {
   // Free-tier users get the paywall card without us even firing the
   // request — the cloud would 402 anyway, no need to round-trip.
   const isPaid = me.subscription.plan !== 'free';
@@ -82,6 +87,11 @@ export function ServerListScreen({ me, onBack, onOpenServer, onMeUpdated }: Prop
    *  refresh). Subsequent server.state_changed events patch single
    *  entries. */
   const [statuses, setStatuses] = useState<Map<string, ServerStatus>>(new Map());
+  /** Servers discovered live on enrolled agent nodes, keyed by node_id.
+   *  Populated when we query an online node's `state.snapshot` (request_id
+   *  `disc:<nodeId>`). These aren't cloud-synced, so without this they'd
+   *  never appear on the phone. */
+  const [nodeServers, setNodeServers] = useState<Map<string, ServerSummary[]>>(new Map());
 
   // Mount the relay connection for paid users — Tauri keeps it open
   // across screen navigations until we stop it, but we tear it down
@@ -114,14 +124,30 @@ export function ServerListScreen({ me, onBack, onOpenServer, onMeUpdated }: Prop
       unsubDisconnected = u;
     });
     subscribeRelayEvent((msg) => {
-      // Owner snapshot — replace the whole map. Drop entries the
-      // owner didn't include (server was deleted owner-side).
       if (msg.kind === 'state_snapshot' && Array.isArray(msg.servers)) {
-        const next = new Map<string, ServerStatus>();
-        for (const s of msg.servers as Array<{ id: string; status: ServerStatus }>) {
-          if (s?.id) next.set(s.id, s.status ?? 'unknown');
+        const servers = msg.servers as Array<{ id?: string; status?: ServerStatus; name?: string }>;
+        const rid = typeof msg.request_id === 'string' ? msg.request_id : '';
+        // Per-node discovery response — we asked a specific agent node via
+        // request_id `disc:<nodeId>`. Record its servers so they appear in
+        // the list (they're not cloud-synced), keyed by that node.
+        if (rid.startsWith('disc:')) {
+          const nodeId = rid.slice('disc:'.length);
+          const discovered: ServerSummary[] = servers
+            .filter((s) => !!s?.id)
+            .map((s) => ({ id: s.id as string, name: s.name ?? (s.id as string), updatedAt: Date.now(), nodeId }));
+          setNodeServers((prev) => {
+            const next = new Map(prev);
+            next.set(nodeId, discovered);
+            return next;
+          });
         }
-        setStatuses(next);
+        // MERGE the reported statuses — never replace, or one source
+        // (owner / a node) would clobber another's badges.
+        setStatuses((prev) => {
+          const next = new Map(prev);
+          for (const s of servers) if (s?.id) next.set(s.id, s.status ?? 'unknown');
+          return next;
+        });
         return;
       }
       // Patch a single row. server.state_changed fires every time the
@@ -163,6 +189,55 @@ export function ServerListScreen({ me, onBack, onOpenServer, onMeUpdated }: Prop
       // screen needs to send commands.
     };
   }, [isPaid]);
+
+  // Discover servers running on enrolled agent nodes that are currently
+  // online on the relay. Each agent answers `state.snapshot` with its full
+  // server list; the request_id `disc:<nodeId>` tells the handler above
+  // which node responded. Re-runs whenever the set of online nodes changes.
+  // Agent servers aren't cloud-synced, so this is the ONLY way they appear.
+  useEffect(() => {
+    if (!isPaid) return;
+    for (const nodeId of onlineNodeIds) {
+      void cloudRelaySendCmd({
+        type: 'cmd',
+        cmd: 'state.snapshot',
+        request_id: `disc:${nodeId}`,
+        args: { nodeId },
+      }).catch(() => {
+        /* relay not up yet / node dropped — a presence change re-fires this */
+      });
+    }
+    // Forget servers from nodes that went offline (return prev unchanged to
+    // avoid a needless re-render when nothing was pruned).
+    setNodeServers((prev) => {
+      let changed = false;
+      const next = new Map(prev);
+      for (const nodeId of prev.keys()) {
+        if (!onlineNodeIds.has(nodeId)) {
+          next.delete(nodeId);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [isPaid, onlineNodeIds]);
+
+  // Final list = cloud-synced servers + servers discovered live on online
+  // agent nodes (dedup by id; a cloud-synced row wins over a node row).
+  const displayedServers = useMemo<ServerSummary[]>(() => {
+    const cloud = state.kind === 'ready' ? state.servers : [];
+    const seen = new Set(cloud.map((s) => s.id));
+    const extra: ServerSummary[] = [];
+    for (const list of nodeServers.values()) {
+      for (const s of list) {
+        if (!seen.has(s.id)) {
+          seen.add(s.id);
+          extra.push(s);
+        }
+      }
+    }
+    return [...cloud, ...extra];
+  }, [state, nodeServers]);
 
   async function load(showRefresh = false) {
     if (showRefresh) setRefreshing(true);
@@ -252,11 +327,11 @@ export function ServerListScreen({ me, onBack, onOpenServer, onMeUpdated }: Prop
         <ListError message={state.message} onRetry={() => load()} />
       )}
       {state.kind === 'ready' &&
-        (state.servers.length === 0 ? (
+        (displayedServers.length === 0 ? (
           <EmptyState />
         ) : (
           <ul className="server-list">
-            {state.servers.map((s) => (
+            {displayedServers.map((s) => (
               <ServerRow
                 key={s.id}
                 server={s}
@@ -310,7 +385,9 @@ function ServerRow({
             {status && <StatusBadge status={status} />}
           </div>
           <div className="server-row-meta">
-            Last synced {relativeTime(server.updatedAt)}
+            {server.nodeId
+              ? 'On an agent node'
+              : `Last synced ${relativeTime(server.updatedAt)}`}
           </div>
         </div>
         <ChevronRight size={16} className="server-row-chev" />

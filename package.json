@@ -1,7 +1,7 @@
 {
   "name": "localforge-mobile",
   "private": true,
-  "version": "0.2.35",
+  "version": "0.2.36",
   "description": "LocalForge mobile companion app — iOS + Android",
   "author": "Fabrizio",
   "license": "UNLICENSED",

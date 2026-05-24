@@ -261,12 +261,20 @@ export function ServerDetailScreen({ server, initialStatus, desktopOnline, onlin
     // backlog with it. If the sync key is locked we proceed without one
     // (the owner defaults to 'local').
     void (async () => {
-      try {
-        const cfg = await cloudServerConfig(server.id);
-        nodeIdRef.current = cfg.nodeId ?? null;
-        if (!cancelled) setNodeId(cfg.nodeId ?? null);
-      } catch {
-        nodeIdRef.current = null;
+      // Agent-discovered servers carry their node_id directly — they aren't
+      // cloud-synced, so cloudServerConfig would fail. Prefer it; otherwise
+      // resolve from the decrypted cloud config.
+      if (server.nodeId) {
+        nodeIdRef.current = server.nodeId;
+        if (!cancelled) setNodeId(server.nodeId);
+      } else {
+        try {
+          const cfg = await cloudServerConfig(server.id);
+          nodeIdRef.current = cfg.nodeId ?? null;
+          if (!cancelled) setNodeId(cfg.nodeId ?? null);
+        } catch {
+          nodeIdRef.current = null;
+        }
       }
       if (cancelled) return;
       void cloudRelaySendCmd({
