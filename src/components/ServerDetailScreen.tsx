@@ -147,6 +147,11 @@ export function ServerDetailScreen({ server, initialStatus, desktopOnline, onlin
   // otherwise overwrite the toast.
   const awaitingId = useRef<string | null>(null);
   const logViewportRef = useRef<HTMLDivElement | null>(null);
+  // Whether the console is "following" the tail. Set from the user's own
+  // scrolling (see onLogScroll), NOT recomputed after new lines land —
+  // measuring distance-from-bottom post-append breaks on bursts, because
+  // scrollHeight has already grown by several lines.
+  const stuckToBottomRef = useRef(true);
   // The server's node id, resolved from its (decrypted) config so every
   // command routes to the right Docker host (local vs a remote agent).
   // Null until resolved, or if the sync key is locked — in which case we
@@ -315,18 +320,27 @@ export function ServerDetailScreen({ server, initialStatus, desktopOnline, onlin
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [server.id, executorOnline, status]);
 
-  // Auto-scroll to bottom whenever a new line lands. useLayoutEffect
-  // so the scroll happens in the same paint as the DOM update — no
-  // visible flicker. The user can still scroll up manually; we only
-  // pin to bottom when they're already near it.
+  // Follow the tail: when a new line lands and the user is stuck to the
+  // bottom, pin to the bottom. useLayoutEffect so it happens in the same
+  // paint as the DOM update (no flicker). We rely on `stuckToBottomRef`
+  // (updated from the user's scrolling) rather than re-measuring here —
+  // post-append the scrollHeight has already grown, so a burst of lines
+  // would read as "far from bottom" and the console would stop following.
   useLayoutEffect(() => {
+    const el = logViewportRef.current;
+    if (!el || !stuckToBottomRef.current) return;
+    el.scrollTop = el.scrollHeight;
+  }, [logs]);
+
+  // Track whether the user is at/near the bottom. Fires for user scrolls
+  // AND our own programmatic scroll-to-bottom (which lands at ~0, keeping
+  // us stuck). Scrolling up past the threshold detaches the follow.
+  const onLogScroll = () => {
     const el = logViewportRef.current;
     if (!el) return;
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    if (distanceFromBottom < 60) {
-      el.scrollTop = el.scrollHeight;
-    }
-  }, [logs]);
+    stuckToBottomRef.current = distanceFromBottom < 80;
+  };
 
   // Build the args object for a relay cmd, stamping the resolved nodeId
   // when we have one so the owner routes to the right host. Omitted →
@@ -516,7 +530,7 @@ export function ServerDetailScreen({ server, initialStatus, desktopOnline, onlin
           <span>Console</span>
           <span className="console-count">{logs.length}/{LOG_BUFFER_CAP}</span>
         </div>
-        <div ref={logViewportRef} className="console-viewport" role="log">
+        <div ref={logViewportRef} onScroll={onLogScroll} className="console-viewport" role="log">
           {consoleMode === 'offline' ? (
             <div className="console-empty">
               Your LocalForge desktop (or VPS agent) isn’t connected, so there’s
