@@ -9,10 +9,11 @@
  * in src/components/README when we approach it (org switcher, settings,
  * audit log etc.).
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { listen } from '@tauri-apps/api/event';
 import { LoginScreen } from './components/LoginScreen';
 import { HomeScreen } from './components/HomeScreen';
-import { ServerListScreen } from './components/ServerListScreen';
+import { ServerListScreen, type ServerStatus } from './components/ServerListScreen';
 import { ServerDetailScreen } from './components/ServerDetailScreen';
 import { ServerConfigScreen } from './components/ServerConfigScreen';
 import {
@@ -28,7 +29,7 @@ import './App.css';
 type Route =
   | { kind: 'home' }
   | { kind: 'servers' }
-  | { kind: 'server'; server: ServerSummary }
+  | { kind: 'server'; server: ServerSummary; status?: ServerStatus }
   | { kind: 'config'; server: ServerSummary };
 
 type State =
@@ -75,6 +76,50 @@ function App() {
     void cloudRelayStart().catch((e) => console.warn('relay start failed', e));
     return () => {
       void cloudRelayStop();
+    };
+  }, [relayUserId]);
+
+  // Track whether the owner's executor (their desktop / VPS agent) is
+  // actually on the relay. The detail screen uses this to say "your
+  // desktop isn't connected" instead of a misleading "waiting for logs"
+  // when nothing can answer. We count the *other* owner-kind sockets
+  // (everything but this phone) from the relay `hello` peer list, then
+  // adjust on `presence` join/leave.
+  const [desktopOnline, setDesktopOnline] = useState(false);
+  const ownerPeersRef = useRef(0);
+  useEffect(() => {
+    if (!relayUserId) {
+      ownerPeersRef.current = 0;
+      setDesktopOnline(false);
+      return;
+    }
+    const unlistens: Array<() => void> = [];
+    let active = true;
+    const apply = (n: number) => {
+      ownerPeersRef.current = Math.max(0, n);
+      setDesktopOnline(ownerPeersRef.current > 0);
+    };
+    void listen<{ you?: { session_id?: string }; peers?: Array<{ kind?: string; session_id?: string }> }>(
+      'cloud://relay-hello',
+      (e) => {
+        const mySession = e.payload?.you?.session_id;
+        const peers = e.payload?.peers ?? [];
+        apply(peers.filter((p) => p.kind === 'owner' && p.session_id !== mySession).length);
+      },
+    ).then((u) => { if (active) unlistens.push(u); else u(); });
+    void listen<{ kind?: string; client_kind?: string }>(
+      'cloud://relay-presence',
+      (e) => {
+        if (e.payload?.client_kind !== 'owner') return;
+        if (e.payload.kind === 'join') apply(ownerPeersRef.current + 1);
+        else if (e.payload.kind === 'leave') apply(ownerPeersRef.current - 1);
+      },
+    ).then((u) => { if (active) unlistens.push(u); else u(); });
+    return () => {
+      active = false;
+      unlistens.forEach((u) => u());
+      ownerPeersRef.current = 0;
+      setDesktopOnline(false);
     };
   }, [relayUserId]);
 
@@ -145,8 +190,8 @@ function App() {
           <ServerListScreen
             me={s.me}
             onBack={() => setState({ ...s, route: { kind: 'home' } })}
-            onOpenServer={(server) =>
-              setState({ ...s, route: { kind: 'server', server } })
+            onOpenServer={(server, status) =>
+              setState({ ...s, route: { kind: 'server', server, status } })
             }
             onMeUpdated={(me) => setState({ ...s, me })}
           />
@@ -156,6 +201,8 @@ function App() {
         return (
           <ServerDetailScreen
             server={server}
+            initialStatus={s.route.status}
+            desktopOnline={desktopOnline}
             onBack={() => setState({ ...s, route: { kind: 'servers' } })}
             onOpenConfig={() => setState({ ...s, route: { kind: 'config', server } })}
           />

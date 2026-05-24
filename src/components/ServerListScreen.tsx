@@ -52,7 +52,7 @@ export type ServerStatus =
 interface Props {
   me: Me;
   onBack: () => void;
-  onOpenServer: (server: ServerSummary) => void;
+  onOpenServer: (server: ServerSummary, status?: ServerStatus) => void;
   /** Called when an IAP purchase/restore upgrades the plan, so the
    *  parent can refresh the app-wide `me` (and this screen flips out of
    *  the paywalled state). */
@@ -261,7 +261,7 @@ export function ServerListScreen({ me, onBack, onOpenServer, onMeUpdated }: Prop
                 key={s.id}
                 server={s}
                 status={statuses.get(s.id)}
-                onOpen={() => onOpenServer(s)}
+                onOpen={() => onOpenServer(s, statuses.get(s.id))}
               />
             ))}
           </ul>

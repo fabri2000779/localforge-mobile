@@ -22,6 +22,7 @@
  */
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
+  Activity,
   ArrowLeft,
   Hash,
   Play,
@@ -37,9 +38,17 @@ import {
   cloudServerConfig,
   type ServerSummary,
 } from '../lib/cloud';
+import { type ServerStatus } from './ServerListScreen';
 
 interface Props {
   server: ServerSummary;
+  /** Last-known container status from the list's state snapshot. Seeds
+   *  the console state (stopped vs live) the moment the screen opens. */
+  initialStatus?: ServerStatus;
+  /** Whether the owner's desktop / VPS agent executor is on the relay.
+   *  When false, nothing can run commands or stream logs — the console
+   *  says so instead of a misleading "waiting for output". */
+  desktopOnline: boolean;
   onBack: () => void;
   onOpenConfig: () => void;
 }
@@ -91,6 +100,23 @@ interface StateChangedEvent {
   status: string;
 }
 
+/** Container resource usage (snake_case — straight from core's
+ *  ContainerStats). Polled while a running server is on screen. */
+interface ContainerStats {
+  cpu_percent: number;
+  memory_usage_mb: number;
+  memory_limit_mb: number;
+  memory_percent: number;
+}
+
+interface StatsSnapshotEvent {
+  type: 'event';
+  kind: 'stats_snapshot';
+  request_id: string;
+  target: string;
+  stats: ContainerStats;
+}
+
 /** Hard cap on retained log lines. Mobile WebViews choke on tens of
  *  thousands of DOM nodes — 500 is comfortable, plenty for an "is my
  *  server happy" glance. Older lines drop off the top. */
@@ -101,10 +127,17 @@ interface LogLine {
   line: string;
 }
 
-export function ServerDetailScreen({ server, onBack, onOpenConfig }: Props) {
+export function ServerDetailScreen({ server, initialStatus, desktopOnline, onBack, onOpenConfig }: Props) {
   const [pending, setPending] = useState<Action | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
   const [logs, setLogs] = useState<LogLine[]>([]);
+  // Live container status. Seeded from the list snapshot, then kept fresh
+  // by `server.state_changed` events. Drives whether the console shows
+  // live output or a "stopped" placeholder.
+  const [status, setStatus] = useState<ServerStatus | undefined>(initialStatus);
+  // Live container resource usage (CPU / memory), polled while a running
+  // server is on screen. Null when not running / not yet read.
+  const [stats, setStats] = useState<ContainerStats | null>(null);
   // The request_id we're currently awaiting a cmd_result for, so we
   // can filter incoming events. Multiple actions in flight aren't
   // supported (the buttons disable each other) but we still match on
@@ -163,7 +196,7 @@ export function ServerDetailScreen({ server, onBack, onOpenConfig }: Props) {
     let unsub: UnlistenFn | undefined;
     let cancelled = false;
 
-    listen<LogsSnapshotEvent | RelayConsoleEvent | StateChangedEvent>(
+    listen<LogsSnapshotEvent | RelayConsoleEvent | StateChangedEvent | StatsSnapshotEvent>(
       'cloud://relay-event',
       (event) => {
         const m = event.payload;
@@ -183,9 +216,25 @@ export function ServerDetailScreen({ server, onBack, onOpenConfig }: Props) {
             return next;
           });
         } else if (m.kind === 'server.state_changed') {
-          if (m.status === 'stopped' || m.status === 'crashed') {
+          const st = m.status as ServerStatus;
+          setStatus(st);
+          if (st === 'stopped' || st === 'crashed') {
+            // Server went down → clear the console, mirroring the desktop.
             setLogs([]);
+          } else if (st === 'running' || st === 'starting') {
+            // (Re)started — re-attach so the fresh container's output
+            // streams, and pull its current backlog.
+            void cloudRelaySendCmd({
+              type: 'cmd', cmd: 'server.logs', request_id: crypto.randomUUID(),
+              target: server.id, args: relayArgs({ lines: 200 }),
+            });
+            void cloudRelaySendCmd({
+              type: 'cmd', cmd: 'server.attach', request_id: crypto.randomUUID(),
+              target: server.id, args: relayArgs(),
+            });
           }
+        } else if (m.kind === 'stats_snapshot') {
+          setStats(m.stats ?? null);
         }
       },
     ).then((u) => {
@@ -232,6 +281,27 @@ export function ServerDetailScreen({ server, onBack, onOpenConfig }: Props) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [server.id]);
+
+  // Poll container usage (CPU / memory) while a running server is on
+  // screen. Stops + clears when the server isn't running or the desktop
+  // is offline — there's nothing to sample then.
+  useEffect(() => {
+    const live = desktopOnline && status !== 'stopped' && status !== 'crashed';
+    if (!live) {
+      setStats(null);
+      return;
+    }
+    const poll = () => {
+      void cloudRelaySendCmd({
+        type: 'cmd', cmd: 'server.stats', request_id: crypto.randomUUID(),
+        target: server.id, args: relayArgs(),
+      });
+    };
+    poll();
+    const id = window.setInterval(poll, 4000);
+    return () => window.clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [server.id, desktopOnline, status]);
 
   // Auto-scroll to bottom whenever a new line lands. useLayoutEffect
   // so the scroll happens in the same paint as the DOM update — no
@@ -310,6 +380,14 @@ export function ServerDetailScreen({ server, onBack, onOpenConfig }: Props) {
     });
   }
 
+  // What the console area shows, in priority order: nothing to talk to
+  // (desktop offline) → server not running → live output.
+  const consoleMode: 'offline' | 'stopped' | 'live' = !desktopOnline
+    ? 'offline'
+    : status === 'stopped' || status === 'crashed'
+      ? 'stopped'
+      : 'live';
+
   return (
     <div className="detail-screen">
       <header className="detail-header">
@@ -348,9 +426,9 @@ export function ServerDetailScreen({ server, onBack, onOpenConfig }: Props) {
         <div className="action-card-header">
           <h2>Controls</h2>
           <p>
-            Commands are forwarded to your LocalForge desktop or VPS over
-            the relay. The result comes back here once the owner finishes
-            executing.
+            {desktopOnline
+              ? 'Commands are forwarded to your LocalForge desktop or VPS over the relay. The result comes back here once it finishes executing.'
+              : 'Your LocalForge desktop (or VPS agent) isn’t connected. Open it to start, stop or restart this server.'}
           </p>
         </div>
         <div className="action-row">
@@ -358,7 +436,7 @@ export function ServerDetailScreen({ server, onBack, onOpenConfig }: Props) {
             label="Start"
             icon={<Play size={16} />}
             tone="positive"
-            disabled={!!pending}
+            disabled={!!pending || !desktopOnline}
             loading={pending === 'start'}
             onClick={() => fire('start')}
           />
@@ -366,7 +444,7 @@ export function ServerDetailScreen({ server, onBack, onOpenConfig }: Props) {
             label="Stop"
             icon={<Square size={16} />}
             tone="danger"
-            disabled={!!pending}
+            disabled={!!pending || !desktopOnline}
             loading={pending === 'stop'}
             onClick={() => fire('stop')}
           />
@@ -374,7 +452,7 @@ export function ServerDetailScreen({ server, onBack, onOpenConfig }: Props) {
             label="Restart"
             icon={<RefreshCcw size={16} />}
             tone="neutral"
-            disabled={!!pending}
+            disabled={!!pending || !desktopOnline}
             loading={pending === 'restart'}
             onClick={() => fire('restart')}
           />
@@ -395,6 +473,31 @@ export function ServerDetailScreen({ server, onBack, onOpenConfig }: Props) {
         </button>
       </section>
 
+      {consoleMode === 'live' && (
+        <section className="card stats-card">
+          <div className="console-header">
+            <Activity size={14} />
+            <span>Usage</span>
+          </div>
+          {stats ? (
+            <div className="stats-grid">
+              <StatBar
+                label="CPU"
+                pct={stats.cpu_percent}
+                detail={`${stats.cpu_percent.toFixed(1)}%`}
+              />
+              <StatBar
+                label="Memory"
+                pct={stats.memory_percent}
+                detail={`${fmtMb(stats.memory_usage_mb)} / ${fmtMb(stats.memory_limit_mb)}`}
+              />
+            </div>
+          ) : (
+            <div className="stats-loading">Reading usage…</div>
+          )}
+        </section>
+      )}
+
       <section className="card console-card">
         <div className="console-header">
           <Terminal size={14} />
@@ -402,11 +505,21 @@ export function ServerDetailScreen({ server, onBack, onOpenConfig }: Props) {
           <span className="console-count">{logs.length}/{LOG_BUFFER_CAP}</span>
         </div>
         <div ref={logViewportRef} className="console-viewport" role="log">
-          {logs.length === 0 ? (
+          {consoleMode === 'offline' ? (
             <div className="console-empty">
-              No output yet. Recent logs load when you open a running
-              server, and new lines stream in live. Send a command below
-              to interact with it.
+              Your LocalForge desktop (or VPS agent) isn’t connected, so there’s
+              nothing to control or stream right now. Open it and it’ll
+              reconnect here automatically.
+            </div>
+          ) : consoleMode === 'stopped' ? (
+            <div className="console-empty">
+              Server is {status === 'crashed' ? 'crashed' : 'stopped'}. Start it
+              to see live console output.
+            </div>
+          ) : logs.length === 0 ? (
+            <div className="console-empty">
+              No output yet. Recent logs load when you open a running server,
+              and new lines stream in live.
             </div>
           ) : (
             logs.map((l, i) => (
@@ -421,7 +534,14 @@ export function ServerDetailScreen({ server, onBack, onOpenConfig }: Props) {
             type="text"
             value={cmdInput}
             onChange={(e) => setCmdInput(e.target.value)}
-            placeholder="Type a command…"
+            placeholder={
+              consoleMode === 'offline'
+                ? 'Desktop not connected'
+                : consoleMode === 'stopped'
+                  ? 'Server is stopped'
+                  : 'Type a command…'
+            }
+            disabled={consoleMode !== 'live'}
             autoCapitalize="off"
             autoCorrect="off"
             autoComplete="off"
@@ -431,7 +551,7 @@ export function ServerDetailScreen({ server, onBack, onOpenConfig }: Props) {
           <button
             type="submit"
             className="console-send"
-            disabled={!cmdInput.trim()}
+            disabled={consoleMode !== 'live' || !cmdInput.trim()}
             aria-label="Send command"
           >
             <Send size={15} />
@@ -482,6 +602,35 @@ function ActionButton({
 }
 
 // ---------------------------------------------------------------------------
+
+function StatBar({
+  label,
+  pct,
+  detail,
+}: {
+  label: string;
+  pct: number;
+  detail: string;
+}) {
+  const clamped = Math.max(0, Math.min(100, Number.isFinite(pct) ? pct : 0));
+  return (
+    <div className="stat-row">
+      <div className="stat-row-top">
+        <span className="stat-label">{label}</span>
+        <span className="stat-detail">{detail}</span>
+      </div>
+      <div className="stat-bar">
+        <div className="stat-bar-fill" style={{ width: `${clamped}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function fmtMb(mb: number): string {
+  if (!Number.isFinite(mb)) return '—';
+  if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`;
+  return `${Math.round(mb)} MB`;
+}
 
 function friendlySuccess(cmd: string): string {
   switch (cmd) {
