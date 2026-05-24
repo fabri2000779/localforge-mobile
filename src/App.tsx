@@ -79,47 +79,69 @@ function App() {
     };
   }, [relayUserId]);
 
-  // Track whether the owner's executor (their desktop / VPS agent) is
-  // actually on the relay. The detail screen uses this to say "your
-  // desktop isn't connected" instead of a misleading "waiting for logs"
-  // when nothing can answer. We count the *other* owner-kind sockets
-  // (everything but this phone) from the relay `hello` peer list, then
-  // adjust on `presence` join/leave.
+  // Track which executors are on the relay, from the `hello` peer list +
+  // `presence` join/leave. Two kinds matter:
+  //   - owner sockets (the user's desktop) → `desktopOnline`
+  //   - node sockets (enrolled VPS agents)  → `onlineNodeIds`
+  // The detail screen uses these to decide whether a given server can be
+  // controlled right now (its agent OR the owner desktop must be present),
+  // instead of a misleading "waiting for logs".
   const [desktopOnline, setDesktopOnline] = useState(false);
+  const [onlineNodeIds, setOnlineNodeIds] = useState<Set<string>>(() => new Set());
   const ownerPeersRef = useRef(0);
+  const nodeIdsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!relayUserId) {
       ownerPeersRef.current = 0;
+      nodeIdsRef.current = new Set();
       setDesktopOnline(false);
+      setOnlineNodeIds(new Set());
       return;
     }
     const unlistens: Array<() => void> = [];
     let active = true;
-    const apply = (n: number) => {
+    const applyOwners = (n: number) => {
       ownerPeersRef.current = Math.max(0, n);
       setDesktopOnline(ownerPeersRef.current > 0);
     };
-    void listen<{ you?: { session_id?: string }; peers?: Array<{ kind?: string; session_id?: string }> }>(
-      'cloud://relay-hello',
-      (e) => {
-        const mySession = e.payload?.you?.session_id;
-        const peers = e.payload?.peers ?? [];
-        apply(peers.filter((p) => p.kind === 'owner' && p.session_id !== mySession).length);
-      },
-    ).then((u) => { if (active) unlistens.push(u); else u(); });
-    void listen<{ kind?: string; client_kind?: string }>(
+    const commitNodes = () => setOnlineNodeIds(new Set(nodeIdsRef.current));
+
+    void listen<{
+      you?: { session_id?: string };
+      peers?: Array<{ kind?: string; session_id?: string; node_id?: string }>;
+    }>('cloud://relay-hello', (e) => {
+      const mySession = e.payload?.you?.session_id;
+      const peers = e.payload?.peers ?? [];
+      applyOwners(peers.filter((p) => p.kind === 'owner' && p.session_id !== mySession).length);
+      nodeIdsRef.current = new Set(
+        peers.filter((p) => p.kind === 'node' && p.node_id).map((p) => p.node_id as string),
+      );
+      commitNodes();
+    }).then((u) => { if (active) unlistens.push(u); else u(); });
+
+    void listen<{ kind?: string; client_kind?: string; node_id?: string }>(
       'cloud://relay-presence',
       (e) => {
-        if (e.payload?.client_kind !== 'owner') return;
-        if (e.payload.kind === 'join') apply(ownerPeersRef.current + 1);
-        else if (e.payload.kind === 'leave') apply(ownerPeersRef.current - 1);
+        const p = e.payload;
+        if (!p) return;
+        if (p.client_kind === 'owner') {
+          if (p.kind === 'join') applyOwners(ownerPeersRef.current + 1);
+          else if (p.kind === 'leave') applyOwners(ownerPeersRef.current - 1);
+        } else if (p.client_kind === 'node' && p.node_id) {
+          if (p.kind === 'join') nodeIdsRef.current.add(p.node_id);
+          else if (p.kind === 'leave') nodeIdsRef.current.delete(p.node_id);
+          commitNodes();
+        }
       },
     ).then((u) => { if (active) unlistens.push(u); else u(); });
+
     return () => {
       active = false;
       unlistens.forEach((u) => u());
       ownerPeersRef.current = 0;
+      nodeIdsRef.current = new Set();
       setDesktopOnline(false);
+      setOnlineNodeIds(new Set());
     };
   }, [relayUserId]);
 
@@ -203,6 +225,7 @@ function App() {
             server={server}
             initialStatus={s.route.status}
             desktopOnline={desktopOnline}
+            onlineNodeIds={onlineNodeIds}
             onBack={() => setState({ ...s, route: { kind: 'servers' } })}
             onOpenConfig={() => setState({ ...s, route: { kind: 'config', server } })}
           />

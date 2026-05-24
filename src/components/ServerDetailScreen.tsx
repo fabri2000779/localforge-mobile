@@ -45,10 +45,12 @@ interface Props {
   /** Last-known container status from the list's state snapshot. Seeds
    *  the console state (stopped vs live) the moment the screen opens. */
   initialStatus?: ServerStatus;
-  /** Whether the owner's desktop / VPS agent executor is on the relay.
-   *  When false, nothing can run commands or stream logs — the console
-   *  says so instead of a misleading "waiting for output". */
+  /** Whether the owner's desktop is on the relay (it reaches local + remote
+   *  agent nodes over HTTPS). */
   desktopOnline: boolean;
+  /** node_ids of enrolled agents currently connected to the relay directly.
+   *  This server is controllable if its node is here, or the desktop is up. */
+  onlineNodeIds: Set<string>;
   onBack: () => void;
   onOpenConfig: () => void;
 }
@@ -127,7 +129,7 @@ interface LogLine {
   line: string;
 }
 
-export function ServerDetailScreen({ server, initialStatus, desktopOnline, onBack, onOpenConfig }: Props) {
+export function ServerDetailScreen({ server, initialStatus, desktopOnline, onlineNodeIds, onBack, onOpenConfig }: Props) {
   const [pending, setPending] = useState<Action | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
   const [logs, setLogs] = useState<LogLine[]>([]);
@@ -150,8 +152,17 @@ export function ServerDetailScreen({ server, initialStatus, desktopOnline, onBac
   // Null until resolved, or if the sync key is locked — in which case we
   // omit it and the owner defaults to 'local'.
   const nodeIdRef = useRef<string | null>(null);
+  // Also in state (the ref drives cmds; the state drives the render's
+  // executor-online check). Resolved from the server's config on open.
+  const [nodeId, setNodeId] = useState<string | null>(null);
   // Console command input (e.g. a Minecraft `say hi` / `stop`).
   const [cmdInput, setCmdInput] = useState('');
+
+  // An executor for THIS server is reachable if its agent node is on the
+  // relay directly, or the owner's desktop is (the desktop reaches local +
+  // agent nodes over HTTPS). nodeId null (sync key locked, or a local-only
+  // server) → fall back to the desktop's presence.
+  const executorOnline = desktopOnline || (nodeId != null && onlineNodeIds.has(nodeId));
 
   // Toast self-dismiss after 3s. Cleared on unmount + every new toast.
   useEffect(() => {
@@ -248,6 +259,7 @@ export function ServerDetailScreen({ server, initialStatus, desktopOnline, onBac
       try {
         const cfg = await cloudServerConfig(server.id);
         nodeIdRef.current = cfg.nodeId ?? null;
+        if (!cancelled) setNodeId(cfg.nodeId ?? null);
       } catch {
         nodeIdRef.current = null;
       }
@@ -286,7 +298,7 @@ export function ServerDetailScreen({ server, initialStatus, desktopOnline, onBac
   // screen. Stops + clears when the server isn't running or the desktop
   // is offline — there's nothing to sample then.
   useEffect(() => {
-    const live = desktopOnline && status !== 'stopped' && status !== 'crashed';
+    const live = executorOnline && status !== 'stopped' && status !== 'crashed';
     if (!live) {
       setStats(null);
       return;
@@ -301,7 +313,7 @@ export function ServerDetailScreen({ server, initialStatus, desktopOnline, onBac
     const id = window.setInterval(poll, 4000);
     return () => window.clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [server.id, desktopOnline, status]);
+  }, [server.id, executorOnline, status]);
 
   // Auto-scroll to bottom whenever a new line lands. useLayoutEffect
   // so the scroll happens in the same paint as the DOM update — no
@@ -382,7 +394,7 @@ export function ServerDetailScreen({ server, initialStatus, desktopOnline, onBac
 
   // What the console area shows, in priority order: nothing to talk to
   // (desktop offline) → server not running → live output.
-  const consoleMode: 'offline' | 'stopped' | 'live' = !desktopOnline
+  const consoleMode: 'offline' | 'stopped' | 'live' = !executorOnline
     ? 'offline'
     : status === 'stopped' || status === 'crashed'
       ? 'stopped'
@@ -426,9 +438,9 @@ export function ServerDetailScreen({ server, initialStatus, desktopOnline, onBac
         <div className="action-card-header">
           <h2>Controls</h2>
           <p>
-            {desktopOnline
-              ? 'Commands are forwarded to your LocalForge desktop or VPS over the relay. The result comes back here once it finishes executing.'
-              : 'Your LocalForge desktop (or VPS agent) isn’t connected. Open it to start, stop or restart this server.'}
+            {executorOnline
+              ? 'Commands are forwarded over the relay to whatever runs this server — your desktop or its VPS agent. The result comes back here once it finishes.'
+              : 'Neither your LocalForge desktop nor this server’s agent is connected. Bring one online to start, stop or restart it.'}
           </p>
         </div>
         <div className="action-row">
@@ -436,7 +448,7 @@ export function ServerDetailScreen({ server, initialStatus, desktopOnline, onBac
             label="Start"
             icon={<Play size={16} />}
             tone="positive"
-            disabled={!!pending || !desktopOnline}
+            disabled={!!pending || !executorOnline}
             loading={pending === 'start'}
             onClick={() => fire('start')}
           />
@@ -444,7 +456,7 @@ export function ServerDetailScreen({ server, initialStatus, desktopOnline, onBac
             label="Stop"
             icon={<Square size={16} />}
             tone="danger"
-            disabled={!!pending || !desktopOnline}
+            disabled={!!pending || !executorOnline}
             loading={pending === 'stop'}
             onClick={() => fire('stop')}
           />
@@ -452,7 +464,7 @@ export function ServerDetailScreen({ server, initialStatus, desktopOnline, onBac
             label="Restart"
             icon={<RefreshCcw size={16} />}
             tone="neutral"
-            disabled={!!pending || !desktopOnline}
+            disabled={!!pending || !executorOnline}
             loading={pending === 'restart'}
             onClick={() => fire('restart')}
           />

@@ -1,6 +1,6 @@
 [package]
 name = "localforge-mobile"
-version = "0.2.33"
+version = "0.2.34"
 description = "LocalForge mobile companion — iOS + Android"
 authors = ["Fabrizio"]
 edition = "2021"
@@ -56,7 +56,6 @@ tauri-plugin-webauth = { path = "plugins/tauri-plugin-webauth" }
 # so a force-push or breaking change upstream can't ambush a mobile
 # release.
 localforge-core = { git = "https://github.com/fabri2000779/localforge.git", branch = "main" }
-localforge-backend-remote = { git = "https://github.com/fabri2000779/localforge.git", branch = "main" }
 # Platform-agnostic cloud client — auth, OAuth URL building,
 # envelope-encryption, audit, billing, orgs, relay WS host. Pulls in
 # its own reqwest / aes-gcm / scrypt / etc so we don't have to list
@@ -70,7 +69,7 @@ base64 = "0.22"
 # yet in the shared crate (event sink trait is the next refactor), so
 # the mobile builds its own connection loop on top of these primitives
 # + the WS URL helper from `localforge_cloud_client::relay`.
-tokio-tungstenite = { version = "0.28", default-features = false, features = ["rustls-tls-webpki-roots", "connect"] }
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["rustls-tls-webpki-roots", "connect"] }
 # Used by the relay's `SinkExt::send` / `StreamExt::next` extension
 # methods. Direct dep since tokio-tungstenite re-exports the trait
 # objects but not the trait-import path.
@@ -100,8 +99,6 @@ webpki-roots = "1"
 
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-thiserror = "2"
-async-trait = "0.1"
 
 [features]
 # `custom-protocol` is the standard Tauri release-mode feature — it

@@ -1,7 +1,7 @@
 {
   "name": "localforge-mobile",
   "private": true,
-  "version": "0.2.33",
+  "version": "0.2.34",
   "description": "LocalForge mobile companion app — iOS + Android",
   "author": "Fabrizio",
   "license": "UNLICENSED",
@@ -20,14 +20,9 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.0",
-    "@tauri-apps/plugin-deep-link": "^2.4.9",
-    "clsx": "^2.1.1",
     "lucide-react": "^1.16.0",
     "react": "^19.2.6",
-    "react-dom": "^19.2.6",
-    "react-router-dom": "^7.15.1",
-    "tailwind-merge": "^3.6.0",
-    "zustand": "^5.0.13"
+    "react-dom": "^19.2.6"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.0",
