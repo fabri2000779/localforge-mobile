@@ -7,19 +7,33 @@
    iPhone notch / Android nav bar. */
 
 :root {
-  --bg: #07090f;
-  --surface: rgba(14, 19, 28, 0.85);
-  --surface-strong: rgba(14, 19, 28, 1);
-  --border: rgba(148, 163, 184, 0.16);
-  --border-strong: rgba(148, 163, 184, 0.28);
-  --text: #e2e8f0;
-  --text-strong: #f1f5f9;
-  --text-muted: #94a3b8;
-  --text-dim: #64748b;
-  --accent: #60a5fa;
+  --bg: #06080e;
+  /* Raised surfaces are layered: glassy --surface for cards, a slightly
+     lighter --surface-2 for nested/raised elements, opaque --surface-strong
+     for pressed/active states. */
+  --surface: rgba(19, 25, 37, 0.72);
+  --surface-2: rgba(27, 34, 49, 0.82);
+  --surface-strong: #161d2b;
+  --border: rgba(148, 163, 184, 0.14);
+  --border-strong: rgba(148, 163, 184, 0.26);
+  --text: #dde4f0;
+  --text-strong: #f4f7fb;
+  --text-muted: #98a6bd;
+  --text-dim: #62708a;
+  --accent: #6aa6ff;
   --accent-strong: #3b82f6;
-  --accent-glow: rgba(59, 130, 246, 0.18);
+  --accent-glow: rgba(74, 130, 255, 0.16);
   --danger: #fca5a5;
+
+  /* Shape + elevation system (new) — applied to cards/rows/buttons so the
+     UI reads as layered glass over a deep backdrop rather than flat panels. */
+  --radius: 18px;
+  --radius-sm: 12px;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 10px 30px -16px rgba(0, 0, 0, 0.8);
+  --shadow-glow: 0 8px 22px -10px rgba(59, 130, 246, 0.45);
+  /* Hairline top highlight that gives glass surfaces a lit top edge. */
+  --edge-light: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 * { box-sizing: border-box; }
@@ -27,7 +41,13 @@
 html, body, #root {
   height: 100%;
   margin: 0;
-  background: var(--bg);
+  /* Deep backdrop with two faint colour pools (top accent, bottom violet)
+     so flat surfaces float over something with depth instead of pure black. */
+  background:
+    radial-gradient(120% 80% at 50% -10%, rgba(59, 130, 246, 0.1) 0%, transparent 55%),
+    radial-gradient(100% 60% at 50% 115%, rgba(124, 92, 246, 0.08) 0%, transparent 60%),
+    var(--bg);
+  background-attachment: fixed;
   color: var(--text);
   font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -355,23 +375,29 @@ input, textarea {
 .icon-btn {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  width: 36px;
-  height: 36px;
+  border-radius: var(--radius-sm);
+  width: 38px;
+  height: 38px;
   display: grid;
   place-items: center;
   color: var(--text-muted);
   cursor: pointer;
-  transition: background 120ms ease, color 120ms ease;
+  box-shadow: var(--shadow-sm), var(--edge-light);
+  transition: background 120ms ease, color 120ms ease, transform 90ms ease;
 }
-.icon-btn:active { background: var(--surface-strong); color: var(--text); }
+.icon-btn:active { background: var(--surface-2); color: var(--text); transform: scale(0.96); }
 .icon-btn:disabled { opacity: 0.45; cursor: default; }
 
 .card {
-  background: var(--surface);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.025), rgba(255, 255, 255, 0) 120px),
+    var(--surface);
   border: 1px solid var(--border);
-  border-radius: 16px;
+  border-radius: var(--radius);
   padding: 18px;
+  box-shadow: var(--shadow-md), var(--edge-light);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
 }
 .card-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 
@@ -400,13 +426,14 @@ input, textarea {
   appearance: none;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 16px;
+  border-radius: var(--radius);
   padding: 16px 14px;
   display: flex;
   align-items: center;
   gap: 14px;
   color: inherit;
   text-align: left;
+  box-shadow: var(--shadow-md), var(--edge-light);
   font-family: inherit;
   cursor: pointer;
   width: 100%;
@@ -483,24 +510,28 @@ input, textarea {
 .server-row {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--radius-sm);
   padding: 13px 14px;
   display: flex;
   align-items: center;
   gap: 14px;
   cursor: pointer;
-  transition: background 120ms ease, border-color 120ms ease;
+  box-shadow: var(--shadow-sm), var(--edge-light);
+  transition: background 120ms ease, border-color 120ms ease,
+    transform 90ms ease;
 }
 .server-row:active {
-  background: var(--surface-strong);
+  background: var(--surface-2);
   border-color: var(--border-strong);
+  transform: scale(0.99);
 }
 .server-row-icon {
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
-  background: rgba(148, 163, 184, 0.08);
-  color: var(--text-muted);
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  background: var(--accent-glow);
+  border: 1px solid rgba(59, 130, 246, 0.22);
+  color: var(--accent);
   display: grid;
   place-items: center;
   flex-shrink: 0;

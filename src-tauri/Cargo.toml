@@ -1,6 +1,6 @@
 [package]
 name = "localforge-mobile"
-version = "0.2.37"
+version = "0.2.38"
 description = "LocalForge mobile companion — iOS + Android"
 authors = ["Fabrizio"]
 edition = "2021"
