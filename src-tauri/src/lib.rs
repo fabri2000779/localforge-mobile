@@ -5,7 +5,9 @@
 
 mod auth;
 mod iap;
+mod nodes;
 mod oauth;
+mod orgs;
 mod relay;
 mod sync;
 mod vault;
@@ -56,6 +58,9 @@ pub fn run() {
             oauth::cloud_oauth_start,
             sync::cloud_servers_list,
             sync::cloud_server_config,
+            nodes::cloud_list_machines,
+            orgs::cloud_org_me,
+            orgs::cloud_org_invite,
             vault::cloud_sync_key_unlock,
             vault::cloud_sync_key_status,
             relay::cloud_relay_start,

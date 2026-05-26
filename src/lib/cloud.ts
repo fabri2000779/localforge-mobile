@@ -116,6 +116,58 @@ export function cloudServersList(): Promise<ServerSummary[]> {
 }
 
 // ---------------------------------------------------------------------------
+// Machines — the org fleet (desktops + agents) the user can address over the
+// relay. Live `online` comes from the relay DO's socket set, not a timestamp.
+// ---------------------------------------------------------------------------
+
+export interface Machine {
+  id: string;
+  name: string;
+  kind: 'desktop' | 'agent';
+  createdAt: number;
+  lastSeenAt: number | null;
+  online: boolean;
+}
+
+export function cloudListMachines(): Promise<Machine[]> {
+  return invoke<Machine[]>('cloud_list_machines');
+}
+
+// ---------------------------------------------------------------------------
+// Org / team — members + invitations (Team plan). Mirrors the cloud's
+// /v1/orgs/* and the desktop's member management.
+// ---------------------------------------------------------------------------
+
+export interface Member {
+  id: string;
+  email: string;
+  display_name: string | null;
+  avatar_url: string | null;
+  role: string; // owner | admin | operator | viewer
+  joined_at: number;
+}
+
+export interface OrgInfo {
+  id: string;
+  name: string;
+  role: string;
+  isOwner: boolean;
+  createdAt: number;
+  members: Member[];
+}
+
+/** The user's primary org with its member list. */
+export function cloudOrgMe(): Promise<OrgInfo> {
+  return invoke<OrgInfo>('cloud_org_me');
+}
+
+/** Invite a sub-user by email + role (viewer|operator|admin). Admin+ only
+ *  (the cloud 403s otherwise). */
+export function cloudOrgInvite(orgId: string, email: string, role: string): Promise<void> {
+  return invoke('cloud_org_invite', { orgId, email, role });
+}
+
+// ---------------------------------------------------------------------------
 // Sync key (DEK) — needed to decrypt a server's config for the
 // viewer/editor. The DEK is unwrapped from `me.syncKey.wrappedDek` with
 // the user's passphrase and cached locally; see src-tauri/src/vault.rs.

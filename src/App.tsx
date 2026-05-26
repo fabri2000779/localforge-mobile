@@ -12,10 +12,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { LoginScreen } from './components/LoginScreen';
-import { HomeScreen } from './components/HomeScreen';
+import { TabBar, type Tab } from './components/TabBar';
 import { ServerListScreen, type ServerStatus } from './components/ServerListScreen';
 import { ServerDetailScreen } from './components/ServerDetailScreen';
 import { ServerConfigScreen } from './components/ServerConfigScreen';
+import { MachinesScreen } from './components/MachinesScreen';
+import { TeamScreen } from './components/TeamScreen';
+import { AccountScreen } from './components/AccountScreen';
 import {
   cloudMe,
   cloudRelayStart,
@@ -26,26 +29,33 @@ import {
 import { useSwipeBack } from './lib/useSwipeBack';
 import './App.css';
 
-type Route =
-  | { kind: 'home' }
-  | { kind: 'servers' }
+// A server detail / config screen pushed ABOVE the tab shell. Null when
+// we're sitting on one of the four tab roots.
+type Overlay =
   | { kind: 'server'; server: ServerSummary; status?: ServerStatus }
   | { kind: 'config'; server: ServerSummary };
 
 type State =
   | { kind: 'loading' }
   | { kind: 'signed-out' }
-  | { kind: 'signed-in'; me: Me; route: Route };
+  | { kind: 'signed-in'; me: Me; tab: Tab; overlay: Overlay | null };
+
+const TAB_ORDER: Tab[] = ['servers', 'machines', 'team', 'account'];
 
 function App() {
   const [state, setState] = useState<State>({ kind: 'loading' });
+  // Tabs that have been opened at least once. We mount each tab's screen
+  // lazily, then KEEP it mounted (hidden) so switching tabs — or opening a
+  // server detail — doesn't unmount + refetch (relay/request budget) and
+  // doesn't lose live discovery state. See task #82.
+  const [visited, setVisited] = useState<Set<Tab>>(() => new Set<Tab>(['servers']));
 
   useEffect(() => {
     cloudMe()
       .then((me) => {
         setState(
           me
-            ? { kind: 'signed-in', me, route: { kind: 'home' } }
+            ? { kind: 'signed-in', me, tab: 'servers', overlay: null }
             : { kind: 'signed-out' },
         );
       })
@@ -145,23 +155,22 @@ function App() {
     };
   }, [relayUserId]);
 
-  // One step "back" through the signed-in routes: server → servers →
-  // home. Functional update so the callback is stable (no `state` dep)
-  // and safe to hand to the swipe recognizer. The icon-btn back buttons
-  // call the same transitions, so gesture and button stay in lock-step.
+  // One step "back" through the pushed overlays: config → server detail →
+  // tab root. The tab roots themselves have nowhere to pop to (you switch
+  // between them via the tab bar). Functional update so the callback is
+  // stable and safe to hand to the swipe recognizer; the in-screen back
+  // buttons call the same transitions, so gesture and button stay in sync.
   const goBack = useCallback(() => {
     setState((s) => {
-      if (s.kind !== 'signed-in') return s;
-      if (s.route.kind === 'config')
-        return { ...s, route: { kind: 'server', server: s.route.server } };
-      if (s.route.kind === 'server') return { ...s, route: { kind: 'servers' } };
-      if (s.route.kind === 'servers') return { ...s, route: { kind: 'home' } };
-      return s; // home is the root — nothing to pop
+      if (s.kind !== 'signed-in' || !s.overlay) return s;
+      if (s.overlay.kind === 'config')
+        return { ...s, overlay: { kind: 'server', server: s.overlay.server } };
+      return { ...s, overlay: null }; // server detail → back to the Servers tab
     });
   }, []);
 
-  // Enable the left-edge swipe only when there's somewhere to go back to.
-  const canGoBack = state.kind === 'signed-in' && state.route.kind !== 'home';
+  // Enable the left-edge swipe only when an overlay is open.
+  const canGoBack = state.kind === 'signed-in' && state.overlay !== null;
   useSwipeBack(goBack, canGoBack);
 
   if (state.kind === 'loading') {
@@ -181,7 +190,8 @@ function App() {
             setState({
               kind: 'signed-in',
               me,
-              route: { kind: 'home' },
+              tab: 'servers',
+              overlay: null,
             })
           }
         />
@@ -189,59 +199,94 @@ function App() {
     );
   }
 
+  // Switch tab: remember it's been visited (so it stays mounted) and clear
+  // any overlay.
+  const selectTab = (tab: Tab) => {
+    setVisited((v) => (v.has(tab) ? v : new Set(v).add(tab)));
+    setState((s) => (s.kind === 'signed-in' ? { ...s, tab, overlay: null } : s));
+  };
+
   return (
     <div className="app-shell">
-      {renderRoute(state)}
+      {/* Tab shell stays mounted (hidden under an overlay) so its screens
+          and live discovery survive opening a server detail. */}
+      <div className="tabbed" style={{ display: state.overlay ? 'none' : 'flex' }}>
+        <div className="tab-scroll">
+          {TAB_ORDER.map((t) =>
+            visited.has(t) ? (
+              <div key={t} style={{ display: state.tab === t ? 'block' : 'none' }}>
+                {renderTab(state, t)}
+              </div>
+            ) : null,
+          )}
+        </div>
+        <TabBar active={state.tab} onChange={selectTab} />
+      </div>
+      {state.overlay && renderOverlay(state, state.overlay)}
     </div>
   );
 
-  function renderRoute(s: Extract<State, { kind: 'signed-in' }>) {
-    switch (s.route.kind) {
-      case 'home':
-        return (
-          <HomeScreen
-            me={s.me}
-            onSignedOut={() => setState({ kind: 'signed-out' })}
-            onOpenServers={() =>
-              setState({ ...s, route: { kind: 'servers' } })
-            }
-          />
-        );
+  // A tab root, rendered (and kept mounted) once visited.
+  function renderTab(s: Extract<State, { kind: 'signed-in' }>, tab: Tab) {
+    switch (tab) {
       case 'servers':
         return (
           <ServerListScreen
             me={s.me}
+            embedded
+            desktopOnline={desktopOnline}
             onlineNodeIds={onlineNodeIds}
-            onBack={() => setState({ ...s, route: { kind: 'home' } })}
+            onBack={() => {}}
             onOpenServer={(server, status) =>
-              setState({ ...s, route: { kind: 'server', server, status } })
+              setState({ ...s, overlay: { kind: 'server', server, status } })
             }
             onMeUpdated={(me) => setState({ ...s, me })}
           />
         );
-      case 'server': {
-        const server = s.route.server;
+      case 'machines':
         return (
-          <ServerDetailScreen
-            server={server}
-            initialStatus={s.route.status}
+          <MachinesScreen
             desktopOnline={desktopOnline}
             onlineNodeIds={onlineNodeIds}
-            onBack={() => setState({ ...s, route: { kind: 'servers' } })}
-            onOpenConfig={() => setState({ ...s, route: { kind: 'config', server } })}
+            isPaid={s.me.subscription.plan !== 'free'}
           />
         );
-      }
-      case 'config': {
-        const server = s.route.server;
+      case 'team':
+        return <TeamScreen me={s.me} />;
+      case 'account':
         return (
-          <ServerConfigScreen
-            server={server}
-            onBack={() => setState({ ...s, route: { kind: 'server', server } })}
+          <AccountScreen
+            me={s.me}
+            desktopOnline={desktopOnline}
+            onlineNodeIds={onlineNodeIds}
+            onSignedOut={() => setState({ kind: 'signed-out' })}
           />
         );
-      }
     }
+  }
+
+  // A server detail / config screen pushed full-screen over the tabs.
+  function renderOverlay(s: Extract<State, { kind: 'signed-in' }>, overlay: Overlay) {
+    if (overlay.kind === 'server') {
+      const server = overlay.server;
+      return (
+        <ServerDetailScreen
+          server={server}
+          initialStatus={overlay.status}
+          desktopOnline={desktopOnline}
+          onlineNodeIds={onlineNodeIds}
+          onBack={() => setState({ ...s, overlay: null })}
+          onOpenConfig={() => setState({ ...s, overlay: { kind: 'config', server } })}
+        />
+      );
+    }
+    const server = overlay.server;
+    return (
+      <ServerConfigScreen
+        server={server}
+        onBack={() => setState({ ...s, overlay: { kind: 'server', server } })}
+      />
+    );
   }
 }
 

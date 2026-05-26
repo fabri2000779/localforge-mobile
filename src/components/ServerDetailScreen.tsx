@@ -26,7 +26,6 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   Activity,
   ArrowLeft,
-  Hash,
   Play,
   RefreshCcw,
   Send,
@@ -442,78 +441,48 @@ export function ServerDetailScreen({ server, initialStatus, desktopOnline, onlin
           <ArrowLeft size={16} />
         </button>
         <div className="detail-title">
-          <div className="home-eyebrow">Server</div>
           <h1>{server.name}</h1>
         </div>
+        {status && (
+          <span className={`status-badge status-badge--${detailVariant(status)}`}>
+            <span className="status-dot" aria-hidden />
+            {detailLabel(status)}
+          </span>
+        )}
       </header>
 
-      <section className="card">
-        <dl className="kv">
-          <div>
-            <dt>
-              <Hash size={12} /> ID
-            </dt>
-            <dd className="mono">{server.id}</dd>
-          </div>
-          <div>
-            <dt>Last synced</dt>
-            <dd>
-              {new Date(server.updatedAt).toLocaleString()}
-            </dd>
-          </div>
-        </dl>
-      </section>
-
-      <section className="card action-card">
-        <div className="action-card-header">
-          <h2>Controls</h2>
-          <p>
-            {executorOnline
-              ? 'Commands are forwarded over the relay to whatever runs this server — your desktop or its VPS agent. The result comes back here once it finishes.'
-              : 'Neither your LocalForge desktop nor this server’s agent is connected. Bring one online to start, stop or restart it.'}
-          </p>
-        </div>
-        <div className="action-row">
-          <ActionButton
-            label="Start"
-            icon={<Play size={16} />}
-            tone="positive"
-            disabled={!!pending || !executorOnline}
-            loading={pending === 'start'}
-            onClick={() => fire('start')}
-          />
-          <ActionButton
-            label="Stop"
-            icon={<Square size={16} />}
-            tone="danger"
-            disabled={!!pending || !executorOnline}
-            loading={pending === 'stop'}
-            onClick={() => fire('stop')}
-          />
-          <ActionButton
-            label="Restart"
-            icon={<RefreshCcw size={16} />}
-            tone="neutral"
-            disabled={!!pending || !executorOnline}
-            loading={pending === 'restart'}
-            onClick={() => fire('restart')}
-          />
-        </div>
-      </section>
-
-      <section className="card action-card">
-        <div className="action-card-header">
-          <h2>Configuration</h2>
-          <p>
-            View and edit this server’s game settings. Changes are applied
-            on your desktop over the relay and re-synced back.
-          </p>
-        </div>
-        <button type="button" className="cfg-btn" onClick={onOpenConfig}>
-          <SlidersHorizontal size={15} />
-          Edit configuration
-        </button>
-      </section>
+      <div className="action-row">
+        <ActionButton
+          label="Start"
+          icon={<Play size={16} />}
+          tone="positive"
+          disabled={!!pending || !executorOnline}
+          loading={pending === 'start'}
+          onClick={() => fire('start')}
+        />
+        <ActionButton
+          label="Stop"
+          icon={<Square size={16} />}
+          tone="danger"
+          disabled={!!pending || !executorOnline}
+          loading={pending === 'stop'}
+          onClick={() => fire('stop')}
+        />
+        <ActionButton
+          label="Restart"
+          icon={<RefreshCcw size={16} />}
+          tone="neutral"
+          disabled={!!pending || !executorOnline}
+          loading={pending === 'restart'}
+          onClick={() => fire('restart')}
+        />
+      </div>
+      {!executorOnline && (
+        <p className="detail-hint">
+          Neither your LocalForge desktop nor this server’s agent is connected —
+          bring one online to start, stop or restart it.
+        </p>
+      )}
 
       {consoleMode === 'live' && (
         <section className="card stats-card">
@@ -612,6 +581,16 @@ export function ServerDetailScreen({ server, initialStatus, desktopOnline, onlin
         </form>
       </section>
 
+      <button type="button" className="cfg-btn detail-cfg" onClick={onOpenConfig}>
+        <SlidersHorizontal size={15} />
+        Edit configuration
+      </button>
+
+      <div className="detail-meta">
+        <span className="mono">{server.id}</span>
+        <span>· synced {new Date(server.updatedAt).toLocaleDateString()}</span>
+      </div>
+
       {toast && (
         <div className={`toast toast--${toast.kind}`} role="status">
           {toast.text}
@@ -683,6 +662,27 @@ function fmtMb(mb: number): string {
   if (!Number.isFinite(mb)) return '—';
   if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`;
   return `${Math.round(mb)} MB`;
+}
+
+function detailVariant(s: ServerStatus): 'ok' | 'busy' | 'bad' | 'muted' {
+  switch (s) {
+    case 'running': return 'ok';
+    case 'starting':
+    case 'stopping': return 'busy';
+    case 'crashed': return 'bad';
+    default: return 'muted';
+  }
+}
+function detailLabel(s: ServerStatus): string {
+  switch (s) {
+    case 'running': return 'Running';
+    case 'stopped': return 'Stopped';
+    case 'starting': return 'Starting';
+    case 'stopping': return 'Stopping';
+    case 'crashed': return 'Crashed';
+    case 'installing': return 'Installing';
+    default: return 'Unknown';
+  }
 }
 
 function friendlySuccess(cmd: string): string {

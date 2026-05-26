@@ -1,30 +1,36 @@
 /**
- * Server list — what the user has stored in the cloud (one row per
- * synced server, regardless of which desktop/VPS it actually runs on).
- *
- * Each row shows the server name, last-synced time, and — once the relay
- * connects and the owner answers `state.snapshot` — a live status badge
- * (running / stopped / crashed …). Tapping a row opens the detail screen
- * with start/stop/restart controls and a live console.
+ * Servers tab — every server the user can reach, grouped by the machine
+ * it runs on. Sources:
+ *   - cloud-synced list (`cloud_servers_list`) for the inventory + names.
+ *   - live relay discovery: for each ONLINE machine (desktop or agent, from
+ *     `cloud_list_machines`) we send `state.snapshot` with request_id
+ *     `disc:<machineId>`. The relay routes it to that exact machine (agents
+ *     via sendToNode, desktops via sendToDevice — Phase 3), so every
+ *     discovered server carries its machine id WITHOUT decrypting anything.
+ * That machine id lets us label + group + filter, and route inline
+ * start/stop straight to the right executor.
  */
 import { useEffect, useMemo, useState } from 'react';
 import {
-  ArrowLeft,
   ChevronRight,
+  Cloud,
   Loader2,
   Lock,
+  Play,
   RefreshCw,
+  Server,
   ServerCog,
-  Wifi,
-  WifiOff,
+  Square,
 } from 'lucide-react';
 import {
+  cloudListMachines,
   cloudRelaySendCmd,
   cloudServersList,
   isCloudError,
   subscribeRelayConnected,
   subscribeRelayDisconnected,
   subscribeRelayEvent,
+  type Machine,
   type Me,
   type ServerSummary,
 } from '../lib/cloud';
@@ -38,8 +44,6 @@ import {
   type Plan,
 } from '../lib/iap';
 
-/** Per-server live status reported by the owner via state.snapshot
- *  or server.state_changed. Mirrors the desktop's ServerStatus enum. */
 export type ServerStatus =
   | 'running'
   | 'stopped'
@@ -51,16 +55,14 @@ export type ServerStatus =
 
 interface Props {
   me: Me;
-  /** node_ids of enrolled agents currently connected to the relay. We
-   *  query each for its server list and merge those into the displayed
-   *  list — agent-hosted servers aren't cloud-synced, so this is the only
-   *  way they show up on the phone. */
   onlineNodeIds: Set<string>;
+  /** Whether an owner desktop is live on the relay. Used (with onlineNodeIds)
+   *  as the presence signal that re-fetches the fleet so a machine that just
+   *  came/went online updates without remounting. */
+  desktopOnline?: boolean;
+  embedded?: boolean;
   onBack: () => void;
   onOpenServer: (server: ServerSummary, status?: ServerStatus) => void;
-  /** Called when an IAP purchase/restore upgrades the plan, so the
-   *  parent can refresh the app-wide `me` (and this screen flips out of
-   *  the paywalled state). */
   onMeUpdated: (me: Me) => void;
 }
 
@@ -70,79 +72,47 @@ type State =
   | { kind: 'error'; message: string }
   | { kind: 'ready'; servers: ServerSummary[] };
 
-export function ServerListScreen({ me, onlineNodeIds, onBack, onOpenServer, onMeUpdated }: Props) {
-  // Free-tier users get the paywall card without us even firing the
-  // request — the cloud would 402 anyway, no need to round-trip.
-  const isPaid = me.subscription.plan !== 'free';
-  const [state, setState] = useState<State>(
-    isPaid ? { kind: 'loading' } : { kind: 'paywalled' },
-  );
-  const [refreshing, setRefreshing] = useState(false);
-  /** Live connection status to the relay WebSocket. Drives the small
-   *  badge in the header so the user knows whether the list reflects
-   *  the owner's current state or only the cached snapshot. */
-  const [relayStatus, setRelayStatus] = useState<'idle' | 'connecting' | 'connected' | 'disconnected'>('idle');
-  /** Per-server live status keyed by server id. Empty until the owner
-   *  responds to `state.snapshot` (sent on connect + on every manual
-   *  refresh). Subsequent server.state_changed events patch single
-   *  entries. */
-  const [statuses, setStatuses] = useState<Map<string, ServerStatus>>(new Map());
-  /** Servers discovered live on enrolled agent nodes, keyed by node_id.
-   *  Populated when we query an online node's `state.snapshot` (request_id
-   *  `disc:<nodeId>`). These aren't cloud-synced, so without this they'd
-   *  never appear on the phone. */
-  const [nodeServers, setNodeServers] = useState<Map<string, ServerSummary[]>>(new Map());
+const ALL = '__all__';
 
-  // Mount the relay connection for paid users — Tauri keeps it open
-  // across screen navigations until we stop it, but we tear it down
-  // on unmount so we don't keep a WS dangling when the user signs
-  // out + comes back. The owner's RelayCommandExecutor answers
-  // `state.snapshot` with a `state_snapshot` event and pushes
-  // `server.state_changed` on every transition, which the subscription
-  // below turns into the per-row status badges.
+export function ServerListScreen({ me, onlineNodeIds, desktopOnline, embedded, onBack, onOpenServer, onMeUpdated }: Props) {
+  const isPaid = me.subscription.plan !== 'free';
+  const [state, setState] = useState<State>(isPaid ? { kind: 'loading' } : { kind: 'paywalled' });
+  const [refreshing, setRefreshing] = useState(false);
+  const [statuses, setStatuses] = useState<Map<string, ServerStatus>>(new Map());
+  /** Servers discovered live on a machine, keyed by machineId (the disc
+   *  request_id). Includes desktops + agents now. */
+  const [nodeServers, setNodeServers] = useState<Map<string, ServerSummary[]>>(new Map());
+  /** The org fleet — id → name/kind/online — for labels + discovery targets. */
+  const [machines, setMachines] = useState<Machine[]>([]);
+  /** Active machine filter chip, or ALL. */
+  const [filter, setFilter] = useState<string>(ALL);
+
+  // Relay status badge + per-server status from snapshots / transitions.
   useEffect(() => {
     if (!isPaid) return;
     let unsubConnected: (() => void) | undefined;
     let unsubDisconnected: (() => void) | undefined;
     let unsubEvent: (() => void) | undefined;
-    setRelayStatus('connecting');
 
-    // On connect: ask the owner for a full snapshot of every server's
-    // current container status. The owner's RelayCommandExecutor
-    // catches state.snapshot and replies with kind: state_snapshot.
     subscribeRelayConnected(() => {
-      setRelayStatus('connected');
-      void cloudRelaySendCmd({
-        type: 'cmd',
-        cmd: 'state.snapshot',
-        request_id: crypto.randomUUID(),
-      });
-    }).then((u) => {
-      unsubConnected = u;
-    });
-    subscribeRelayDisconnected(() => setRelayStatus('disconnected')).then((u) => {
-      unsubDisconnected = u;
-    });
+      void cloudRelaySendCmd({ type: 'cmd', cmd: 'state.snapshot', request_id: crypto.randomUUID() });
+    }).then((u) => { unsubConnected = u; });
+    subscribeRelayDisconnected(() => {}).then((u) => { unsubDisconnected = u; });
     subscribeRelayEvent((msg) => {
       if (msg.kind === 'state_snapshot' && Array.isArray(msg.servers)) {
         const servers = msg.servers as Array<{ id?: string; status?: ServerStatus; name?: string }>;
         const rid = typeof msg.request_id === 'string' ? msg.request_id : '';
-        // Per-node discovery response — we asked a specific agent node via
-        // request_id `disc:<nodeId>`. Record its servers so they appear in
-        // the list (they're not cloud-synced), keyed by that node.
         if (rid.startsWith('disc:')) {
-          const nodeId = rid.slice('disc:'.length);
+          const machineId = rid.slice('disc:'.length);
           const discovered: ServerSummary[] = servers
             .filter((s) => !!s?.id)
-            .map((s) => ({ id: s.id as string, name: s.name ?? (s.id as string), updatedAt: Date.now(), nodeId }));
+            .map((s) => ({ id: s.id as string, name: s.name ?? (s.id as string), updatedAt: Date.now(), nodeId: machineId }));
           setNodeServers((prev) => {
             const next = new Map(prev);
-            next.set(nodeId, discovered);
+            next.set(machineId, discovered);
             return next;
           });
         }
-        // MERGE the reported statuses — never replace, or one source
-        // (owner / a node) would clobber another's badges.
         setStatuses((prev) => {
           const next = new Map(prev);
           for (const s of servers) if (s?.id) next.set(s.id, s.status ?? 'unknown');
@@ -150,8 +120,6 @@ export function ServerListScreen({ me, onlineNodeIds, onBack, onOpenServer, onMe
         });
         return;
       }
-      // Patch a single row. server.state_changed fires every time the
-      // owner-side serverStore observes a status transition.
       if (msg.kind === 'server.state_changed' && typeof msg.target === 'string') {
         const target = msg.target;
         const status = (msg.status ?? 'unknown') as ServerStatus;
@@ -161,113 +129,71 @@ export function ServerListScreen({ me, onlineNodeIds, onBack, onOpenServer, onMe
           return next;
         });
       }
-    }).then((u) => {
-      unsubEvent = u;
-    });
-    // The relay is started once at the app root (App.tsx) and stays up
-    // across navigation, so by the time this screen mounts it's very
-    // likely already connected — meaning the `relay-connected` event
-    // already fired and the handler above won't run again. Send an
-    // initial snapshot best-effort to populate the status badges now; if
-    // the relay isn't connected yet this no-ops and the connected handler
-    // covers it.
-    void cloudRelaySendCmd({
-      type: 'cmd',
-      cmd: 'state.snapshot',
-      request_id: crypto.randomUUID(),
-    })
-      .then(() => setRelayStatus('connected'))
-      .catch(() => {
-        /* relay not up yet — the relay-connected handler will fire it */
-      });
+    }).then((u) => { unsubEvent = u; });
+
+    void cloudRelaySendCmd({ type: 'cmd', cmd: 'state.snapshot', request_id: crypto.randomUUID() }).catch(() => {});
     return () => {
       unsubConnected?.();
       unsubDisconnected?.();
       unsubEvent?.();
-      // Relay lifecycle is owned by App.tsx now — do NOT stop it here, or
-      // navigating into a server would kill the connection the detail
-      // screen needs to send commands.
     };
   }, [isPaid]);
 
-  // Discover servers running on enrolled agent nodes that are currently
-  // online on the relay. Each agent answers `state.snapshot` with its full
-  // server list; the request_id `disc:<nodeId>` tells the handler above
-  // which node responded. Re-runs whenever the set of online nodes changes.
-  // Agent servers aren't cloud-synced, so this is the ONLY way they appear.
+  // Stable presence signal (contents, not Set identity — App.tsx mints a
+  // fresh Set per event). Drives the fleet re-fetch so a machine that just
+  // came/went online updates m.online → discovery targets, without a remount.
+  const presenceKey = useMemo(
+    () => `${desktopOnline ? 1 : 0}|${[...onlineNodeIds].sort().join(',')}`,
+    [desktopOnline, onlineNodeIds],
+  );
+
+  // Fleet list for labels + discovery targets — re-fetched on presence change.
   useEffect(() => {
     if (!isPaid) return;
-    for (const nodeId of onlineNodeIds) {
+    void cloudListMachines().then(setMachines).catch(() => setMachines([]));
+  }, [isPaid, presenceKey]);
+
+  // Discover servers on every machine that's online — desktops AND agents.
+  // The relay routes each disc to the right executor; responses carry the
+  // machine id so we can group/label them.
+  const onlineMachineIds = useMemo(() => {
+    const ids = new Set<string>(onlineNodeIds);
+    for (const m of machines) if (m.online) ids.add(m.id);
+    return [...ids];
+  }, [machines, onlineNodeIds]);
+  const onlineKey = onlineMachineIds.join(',');
+
+  useEffect(() => {
+    if (!isPaid) return;
+    for (const id of onlineMachineIds) {
       void cloudRelaySendCmd({
         type: 'cmd',
         cmd: 'state.snapshot',
-        request_id: `disc:${nodeId}`,
-        args: { nodeId },
-      }).catch(() => {
-        /* relay not up yet / node dropped — a presence change re-fires this */
-      });
+        request_id: `disc:${id}`,
+        args: { nodeId: id },
+      }).catch(() => {});
     }
-    // Forget servers from nodes that went offline (return prev unchanged to
-    // avoid a needless re-render when nothing was pruned).
+    // Drop servers from machines that went offline.
     setNodeServers((prev) => {
+      const live = new Set(onlineMachineIds);
       let changed = false;
       const next = new Map(prev);
-      for (const nodeId of prev.keys()) {
-        if (!onlineNodeIds.has(nodeId)) {
-          next.delete(nodeId);
-          changed = true;
-        }
-      }
+      for (const id of prev.keys()) if (!live.has(id)) { next.delete(id); changed = true; }
       return changed ? next : prev;
     });
-  }, [isPaid, onlineNodeIds]);
-
-  // Final list = cloud-synced servers + servers discovered live on online
-  // agent nodes (dedup by id; a cloud-synced row wins over a node row).
-  const displayedServers = useMemo<ServerSummary[]>(() => {
-    const cloud = state.kind === 'ready' ? state.servers : [];
-    const seen = new Set(cloud.map((s) => s.id));
-    const extra: ServerSummary[] = [];
-    for (const list of nodeServers.values()) {
-      for (const s of list) {
-        if (!seen.has(s.id)) {
-          seen.add(s.id);
-          extra.push(s);
-        }
-      }
-    }
-    return [...cloud, ...extra];
-  }, [state, nodeServers]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPaid, onlineKey]);
 
   async function load(showRefresh = false) {
     if (showRefresh) setRefreshing(true);
     try {
-      const servers = await cloudServersList();
+      const [servers] = await Promise.all([cloudServersList()]);
       setState({ kind: 'ready', servers });
-      // Piggy-back: also ask the relay for a fresh state snapshot if
-      // it's connected. Without this, refresh would update the list
-      // but leave stale badges from the connect-time snapshot.
-      if (relayStatus === 'connected') {
-        void cloudRelaySendCmd({
-          type: 'cmd',
-          cmd: 'state.snapshot',
-          request_id: crypto.randomUUID(),
-        });
-      }
+      void cloudListMachines().then(setMachines).catch(() => {});
+      void cloudRelaySendCmd({ type: 'cmd', cmd: 'state.snapshot', request_id: crypto.randomUUID() }).catch(() => {});
     } catch (e) {
-      // 402 → paid plan required. Any other error → show inline.
-      if (isCloudError(e) && e.status === 402) {
-        setState({ kind: 'paywalled' });
-      } else {
-        setState({
-          kind: 'error',
-          message: isCloudError(e)
-            ? (e.message ?? `Couldn't load servers (${e.code}).`)
-            : e instanceof Error
-              ? e.message
-              : 'Something went wrong.',
-        });
-      }
+      if (isCloudError(e) && e.status === 402) setState({ kind: 'paywalled' });
+      else setState({ kind: 'error', message: isCloudError(e) ? (e.message ?? `Couldn't load servers (${e.code}).`) : 'Something went wrong.' });
     } finally {
       setRefreshing(false);
     }
@@ -278,68 +204,119 @@ export function ServerListScreen({ me, onlineNodeIds, onBack, onOpenServer, onMe
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // A paywall purchase/restore succeeded: lift the refreshed Me to the
-  // app (which re-renders us with isPaid=true and mounts the relay), and
-  // immediately flip this screen from the paywall to the loading list.
   function handleUpgraded(updated: Me) {
     onMeUpdated(updated);
     setState({ kind: 'loading' });
     void load();
   }
 
+  // serverId → machineId, from live discovery.
+  const serverMachine = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const [machineId, list] of nodeServers) for (const s of list) map.set(s.id, machineId);
+    return map;
+  }, [nodeServers]);
+
+  const machineName = (id: string | undefined): string | null => {
+    if (!id) return null;
+    return machines.find((m) => m.id === id)?.name ?? null;
+  };
+
+  // Full list = synced servers + live-discovered (dedup by id).
+  const allServers = useMemo<ServerSummary[]>(() => {
+    const cloud = state.kind === 'ready' ? state.servers : [];
+    const seen = new Set(cloud.map((s) => s.id));
+    const extra: ServerSummary[] = [];
+    for (const list of nodeServers.values()) for (const s of list) if (!seen.has(s.id)) { seen.add(s.id); extra.push(s); }
+    return [...cloud, ...extra];
+  }, [state, nodeServers]);
+
+  // The machine id a server belongs to: live discovery wins, else its own
+  // nodeId (agent-only rows), else unknown.
+  const machineOf = (s: ServerSummary): string | undefined => serverMachine.get(s.id) ?? s.nodeId;
+
+  const displayed = useMemo(
+    () => (filter === ALL ? allServers : allServers.filter((s) => machineOf(s) === filter)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [allServers, filter, serverMachine],
+  );
+
+  // Chips: machines that actually host a visible server.
+  const chipMachines = useMemo(() => {
+    const ids = new Set<string>();
+    for (const s of allServers) { const id = machineOf(s); if (id) ids.add(id); }
+    return machines.filter((m) => ids.has(m.id));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allServers, machines, serverMachine]);
+
+  function sendAction(server: ServerSummary, action: 'start' | 'stop') {
+    const nodeId = machineOf(server) ?? 'local';
+    void cloudRelaySendCmd({
+      type: 'cmd',
+      cmd: `server.${action}`,
+      request_id: crypto.randomUUID(),
+      target: server.id,
+      args: { nodeId },
+    }).catch(() => {});
+    // Optimistic: reflect the transition immediately; the real status
+    // arrives via server.state_changed.
+    setStatuses((prev) => {
+      const next = new Map(prev);
+      next.set(server.id, action === 'start' ? 'starting' : 'stopping');
+      return next;
+    });
+  }
+
   return (
     <div className="list-screen">
       <header className="list-header">
-        <button
-          type="button"
-          className="icon-btn"
-          onClick={onBack}
-          aria-label="Back"
-        >
-          <ArrowLeft size={16} />
-        </button>
+        {!embedded && (
+          <button type="button" className="icon-btn" onClick={onBack} aria-label="Back">
+            <ChevronRight size={16} style={{ transform: 'rotate(180deg)' }} />
+          </button>
+        )}
         <div className="list-title">
-          <div className="home-eyebrow">Cloud</div>
-          <h1>Your servers</h1>
-          {isPaid && <RelayBadge status={relayStatus} />}
+          <h1>Servers</h1>
         </div>
         {state.kind === 'ready' && (
-          <button
-            type="button"
-            className="icon-btn"
-            onClick={() => load(true)}
-            disabled={refreshing}
-            aria-label="Refresh"
-          >
-            <RefreshCw
-              size={16}
-              style={refreshing ? { animation: 'spin 0.8s linear infinite' } : undefined}
-            />
+          <button type="button" className="icon-btn" onClick={() => load(true)} disabled={refreshing} aria-label="Refresh">
+            <RefreshCw size={16} style={refreshing ? { animation: 'spin 0.8s linear infinite' } : undefined} />
           </button>
         )}
       </header>
 
       {state.kind === 'loading' && <ListLoading />}
-      {state.kind === 'paywalled' && (
-        <Paywall plan={me.subscription.plan} onUpgraded={handleUpgraded} />
-      )}
-      {state.kind === 'error' && (
-        <ListError message={state.message} onRetry={() => load()} />
-      )}
+      {state.kind === 'paywalled' && <Paywall plan={me.subscription.plan} onUpgraded={handleUpgraded} />}
+      {state.kind === 'error' && <ListError message={state.message} onRetry={() => load()} />}
       {state.kind === 'ready' &&
-        (displayedServers.length === 0 ? (
+        (allServers.length === 0 ? (
           <EmptyState />
         ) : (
-          <ul className="server-list">
-            {displayedServers.map((s) => (
-              <ServerRow
-                key={s.id}
-                server={s}
-                status={statuses.get(s.id)}
-                onOpen={() => onOpenServer(s, statuses.get(s.id))}
-              />
-            ))}
-          </ul>
+          <>
+            {chipMachines.length > 0 && (
+              <div className="filter-chips">
+                <button className={`fchip ${filter === ALL ? 'on' : ''}`} onClick={() => setFilter(ALL)}>All</button>
+                {chipMachines.map((m) => (
+                  <button key={m.id} className={`fchip ${filter === m.id ? 'on' : ''}`} onClick={() => setFilter(m.id)}>
+                    {m.kind === 'desktop' ? <Server size={12} /> : <Cloud size={12} />}
+                    {m.name}
+                  </button>
+                ))}
+              </div>
+            )}
+            <ul className="server-list">
+              {displayed.map((s) => (
+                <ServerRow
+                  key={s.id}
+                  server={s}
+                  status={statuses.get(s.id)}
+                  machine={machineName(machineOf(s))}
+                  onOpen={() => onOpenServer(s, statuses.get(s.id))}
+                  onAction={(a) => sendAction(s, a)}
+                />
+              ))}
+            </ul>
+          </>
         ))}
     </div>
   );
@@ -347,49 +324,47 @@ export function ServerListScreen({ me, onlineNodeIds, onBack, onOpenServer, onMe
 
 // ---------------------------------------------------------------------------
 
-function RelayBadge({
-  status,
-}: {
-  status: 'idle' | 'connecting' | 'connected' | 'disconnected';
-}) {
-  if (status === 'idle') return null;
-  const isLive = status === 'connected';
-  const label =
-    status === 'connected' ? 'Live' : status === 'connecting' ? 'Connecting…' : 'Offline';
-  return (
-    <span className={`relay-badge ${isLive ? 'relay-badge--live' : ''}`}>
-      {isLive ? <Wifi size={11} /> : <WifiOff size={11} />}
-      {label}
-    </span>
-  );
-}
-
 function ServerRow({
   server,
   status,
+  machine,
   onOpen,
+  onAction,
 }: {
   server: ServerSummary;
   status: ServerStatus | undefined;
+  machine: string | null;
   onOpen: () => void;
+  onAction: (action: 'start' | 'stop') => void;
 }) {
+  const running = status === 'running' || status === 'starting';
+  const busy = status === 'starting' || status === 'stopping';
   return (
     <li>
       <button type="button" className="server-row" onClick={onOpen}>
-        <div className="server-row-icon">
-          <ServerCog size={18} />
-        </div>
+        <div className="server-row-icon"><ServerCog size={18} /></div>
         <div className="server-row-body">
           <div className="server-row-name-row">
             <div className="server-row-name">{server.name}</div>
             {status && <StatusBadge status={status} />}
           </div>
           <div className="server-row-meta">
-            {server.nodeId
-              ? 'On an agent node'
-              : `Last synced ${relativeTime(server.updatedAt)}`}
+            {machine ? <>on <strong style={{ color: 'var(--text)' }}>{machine}</strong></> : 'Cloud-synced'}
           </div>
         </div>
+        {status && status !== 'installing' && (
+          <span
+            role="button"
+            tabIndex={0}
+            className={`row-action ${running ? 'row-action--stop' : 'row-action--start'}`}
+            aria-label={running ? 'Stop' : 'Start'}
+            aria-disabled={busy}
+            onClick={(e) => { e.stopPropagation(); if (!busy) onAction(running ? 'stop' : 'start'); }}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); if (!busy) onAction(running ? 'stop' : 'start'); } }}
+          >
+            {running ? <Square size={14} /> : <Play size={14} />}
+          </span>
+        )}
         <ChevronRight size={16} className="server-row-chev" />
       </button>
     </li>
@@ -397,12 +372,8 @@ function ServerRow({
 }
 
 function StatusBadge({ status }: { status: ServerStatus }) {
-  // Color buckets: green = healthy, amber = transitioning, red = bad,
-  // muted = unknown / installing. Labels are 1–2 words to fit on a
-  // 360 px width device beside the server name without truncation.
-  const variant = statusVariant(status);
   return (
-    <span className={`status-badge status-badge--${variant}`}>
+    <span className={`status-badge status-badge--${statusVariant(status)}`}>
       <span className="status-dot" aria-hidden />
       {statusLabel(status)}
     </span>
@@ -415,14 +386,9 @@ function statusVariant(s: ServerStatus): 'ok' | 'busy' | 'bad' | 'muted' {
     case 'starting':
     case 'stopping': return 'busy';
     case 'crashed': return 'bad';
-    case 'stopped':
-    case 'installing':
-    case 'unknown':
-    default:
-      return 'muted';
+    default: return 'muted';
   }
 }
-
 function statusLabel(s: ServerStatus): string {
   switch (s) {
     case 'running': return 'Running';
@@ -448,32 +414,19 @@ function ListLoading() {
 function EmptyState() {
   return (
     <div className="list-state">
-      <div className="empty-mark">
-        <ServerCog size={28} />
-      </div>
-      <h2>No cloud-synced servers yet</h2>
-      <p>
-        Spin up a server in the LocalForge desktop app — once it syncs to
-        the cloud, it'll appear here within a few seconds.
-      </p>
+      <div className="empty-mark"><ServerCog size={28} /></div>
+      <h2>No servers yet</h2>
+      <p>Spin up a server in the LocalForge desktop app — once it syncs, it appears here within a few seconds.</p>
     </div>
   );
 }
 
-function ListError({
-  message,
-  onRetry,
-}: {
-  message: string;
-  onRetry: () => void;
-}) {
+function ListError({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
     <div className="list-state">
       <h2>Couldn't load your servers</h2>
       <p>{message}</p>
-      <button type="button" className="auth-submit" onClick={onRetry}>
-        Try again
-      </button>
+      <button type="button" className="auth-submit" onClick={onRetry}>Try again</button>
     </div>
   );
 }
@@ -485,26 +438,16 @@ function Paywall({
   plan: 'free' | 'hobby' | 'team';
   onUpgraded: (me: Me) => void;
 }) {
-  // null = still loading the store product list.
   const [products, setProducts] = useState<Product[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  // Product id currently mid-purchase (drives the per-row spinner).
   const [busyId, setBusyId] = useState<string | null>(null);
   const [restoring, setRestoring] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
-    listProducts()
-      .then((p) => {
-        if (alive) setProducts(p);
-      })
-      .catch((e) => {
-        if (alive) setLoadError(paywallErr(e));
-      });
-    return () => {
-      alive = false;
-    };
+    listProducts().then((p) => { if (alive) setProducts(p); }).catch((e) => { if (alive) setLoadError(paywallErr(e)); });
+    return () => { alive = false; };
   }, []);
 
   async function buy(productId: string) {
@@ -514,7 +457,6 @@ function Paywall({
       const me = await purchaseAndVerify(productId);
       onUpgraded(me);
     } catch (e) {
-      // Backing out of the store sheet isn't an error — stay quiet.
       if (!isUserCancelled(e)) setNotice(paywallErr(e));
     } finally {
       setBusyId(null);
@@ -526,11 +468,8 @@ function Paywall({
     setRestoring(true);
     try {
       const me = await restoreAndVerify();
-      if (me && me.subscription.plan !== 'free') {
-        onUpgraded(me);
-      } else {
-        setNotice('No active subscription found to restore.');
-      }
+      if (me && me.subscription.plan !== 'free') onUpgraded(me);
+      else setNotice('No active subscription found to restore.');
     } catch (e) {
       setNotice(paywallErr(e));
     } finally {
@@ -538,37 +477,26 @@ function Paywall({
     }
   }
 
-  const ordered = (products ?? [])
-    .slice()
-    .sort((a, b) => planRank(a.plan) - planRank(b.plan));
+  const ordered = (products ?? []).slice().sort((a, b) => planRank(a.plan) - planRank(b.plan));
   const busy = busyId !== null || restoring;
 
   return (
     <div className="list-state">
-      <div className="empty-mark empty-mark--lock">
-        <Lock size={24} />
-      </div>
+      <div className="empty-mark empty-mark--lock"><Lock size={24} /></div>
       <h2>Unlock cloud sync</h2>
       <p>
         Server sync, sub-user access and the audit log unlock with a
-        subscription. The LocalForge desktop app stays free forever for
-        local hosting and remote VPS agents.
+        subscription. The LocalForge desktop app stays free forever for local
+        hosting and remote VPS agents.
       </p>
 
       {products === null && !loadError && (
-        <div className="paywall-loading">
-          <Loader2 size={16} className="spin" /> Loading plans…
-        </div>
+        <div className="paywall-loading"><Loader2 size={16} className="spin" /> Loading plans…</div>
       )}
-
       {loadError && <p className="list-state-hint paywall-error">{loadError}</p>}
-
       {products !== null && ordered.length === 0 && !loadError && (
-        <p className="list-state-hint">
-          In-app purchases aren't available on this device.
-        </p>
+        <p className="list-state-hint">In-app purchases aren't available on this device.</p>
       )}
-
       {ordered.length > 0 && (
         <ul className="paywall-plans">
           {ordered.map((p) => (
@@ -577,34 +505,17 @@ function Paywall({
                 <div className="paywall-plan-name">{planTitle(p.plan)}</div>
                 <div className="paywall-plan-desc">{planBlurb(p.plan)}</div>
               </div>
-              <button
-                type="button"
-                className="auth-submit paywall-buy"
-                disabled={busy}
-                onClick={() => buy(p.id)}
-              >
-                {busyId === p.id ? (
-                  <Loader2 size={15} className="spin" />
-                ) : (
-                  `${p.displayPrice}/mo`
-                )}
+              <button type="button" className="auth-submit paywall-buy" disabled={busy} onClick={() => buy(p.id)}>
+                {busyId === p.id ? <Loader2 size={15} className="spin" /> : `${p.displayPrice}/mo`}
               </button>
             </li>
           ))}
         </ul>
       )}
-
       {notice && <p className="list-state-hint paywall-error">{notice}</p>}
-
-      <button
-        type="button"
-        className="paywall-restore"
-        onClick={restore}
-        disabled={busy}
-      >
+      <button type="button" className="paywall-restore" onClick={restore} disabled={busy}>
         {restoring ? 'Restoring…' : 'Restore purchases'}
       </button>
-
       <p className="paywall-fineprint">
         Subscriptions renew automatically each month until cancelled. Cancel
         anytime in your device's store account settings. You're currently on{' '}
@@ -614,40 +525,13 @@ function Paywall({
   );
 }
 
-function planRank(p: Plan): number {
-  return p === 'hobby' ? 0 : 1;
-}
-
-function planTitle(p: Plan): string {
-  return p === 'hobby' ? 'Hobby' : 'Team';
-}
-
+function planRank(p: Plan): number { return p === 'hobby' ? 0 : 1; }
+function planTitle(p: Plan): string { return p === 'hobby' ? 'Hobby' : 'Team'; }
 function planBlurb(p: Plan): string {
-  return p === 'hobby'
-    ? 'Cloud sync, audit log, and one sub-user seat.'
-    : 'Everything in Hobby, plus team members and roles.';
+  return p === 'hobby' ? 'Cloud sync, audit log, and one sub-user seat.' : 'Everything in Hobby, plus team members and roles.';
 }
-
-/** Flatten any of our error shapes (IAP, cloud, plain Error) to a line
- *  of copy for the paywall. */
 function paywallErr(e: unknown): string {
   if (isIapError(e)) return e.message || 'Something went wrong with the store.';
   if (isCloudError(e)) return e.message ?? `Couldn't verify the purchase (${e.code}).`;
   return e instanceof Error ? e.message : 'Something went wrong.';
-}
-
-// ---------------------------------------------------------------------------
-
-function relativeTime(unixMs: number): string {
-  const diffMs = Date.now() - unixMs;
-  if (diffMs < 0) return 'in the future';
-  const sec = Math.floor(diffMs / 1000);
-  if (sec < 60) return `${sec}s ago`;
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m ago`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h ago`;
-  const day = Math.floor(hr / 24);
-  if (day < 30) return `${day}d ago`;
-  return new Date(unixMs).toLocaleDateString();
 }
