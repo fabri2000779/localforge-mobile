@@ -167,6 +167,26 @@ export function cloudOrgInvite(orgId: string, email: string, role: string): Prom
   return invoke('cloud_org_invite', { orgId, email, role });
 }
 
+export interface OrgSummary {
+  id: string;
+  name: string;
+  role: string;
+  isOwner: boolean;
+  createdAt: number;
+  joinedAt: number;
+}
+
+/** Every org the user belongs to (own + invited). Powers the org switcher. */
+export function cloudOrgsList(): Promise<OrgSummary[]> {
+  return invoke<OrgSummary[]>('cloud_orgs_list');
+}
+
+/** Point cloud calls at a specific org (a sub-user viewing the owner's org),
+ *  sent as X-LocalForge-Org. `null` → the caller's primary org. */
+export function cloudSetActiveOrg(orgId: string | null): Promise<void> {
+  return invoke('cloud_set_active_org', { orgId });
+}
+
 // ---------------------------------------------------------------------------
 // Sync key (DEK) — needed to decrypt a server's config for the
 // viewer/editor. The DEK is unwrapped from `me.syncKey.wrappedDek` with
@@ -212,8 +232,8 @@ export function cloudServerConfig(serverId: string): Promise<ServerConfigView> {
 // the named events below and sends commands via `cloudRelaySendCmd`.
 // ---------------------------------------------------------------------------
 
-export function cloudRelayStart(): Promise<void> {
-  return invoke('cloud_relay_start');
+export function cloudRelayStart(orgId?: string | null): Promise<void> {
+  return invoke('cloud_relay_start', { orgId: orgId ?? null });
 }
 export function cloudRelayStop(): Promise<void> {
   return invoke('cloud_relay_stop');

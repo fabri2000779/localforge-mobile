@@ -55,10 +55,11 @@ struct Envelope {
     ty: String,
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn cloud_relay_start(
     app: AppHandle,
     state: tauri::State<'_, Arc<RelayState>>,
+    org_id: Option<String>,
 ) -> Result<(), String> {
     // Replace any prior loop. A clean shutdown of the previous one
     // prevents the "two WS connections, both bound to the same
@@ -71,9 +72,14 @@ pub async fn cloud_relay_start(
     }
 
     let token = crate::auth::load_token(&app).ok_or_else(|| "unauthenticated".to_string())?;
-    let org_id = fetch_org_id(&token)
-        .await
-        .map_err(|e| format!("fetch org: {e}"))?;
+    // Connect to the chosen ACTIVE org (a sub-user observing the owner's org)
+    // when given; else the caller's primary org. Mirrors the desktop.
+    let org_id = match org_id {
+        Some(id) if !id.is_empty() => id,
+        _ => fetch_org_id(&token)
+            .await
+            .map_err(|e| format!("fetch org: {e}"))?,
+    };
 
     let (cancel_tx, mut cancel_rx) = oneshot::channel::<()>();
     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<String>();

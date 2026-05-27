@@ -5,7 +5,7 @@
 //! bringing the desktop's member management to the phone.
 
 use localforge_cloud_client::api::ApiError;
-use localforge_cloud_client::orgs::{self, OrgInfo};
+use localforge_cloud_client::orgs::{self, OrgInfo, OrgSummary};
 
 fn unauth() -> ApiError {
     ApiError::Server {
@@ -22,6 +22,25 @@ pub async fn cloud_org_me(app: tauri::AppHandle) -> Result<OrgInfo, ApiError> {
         return Err(unauth());
     };
     orgs::me(&token).await
+}
+
+/// Every org the user belongs to (own + ones they were invited to). Powers
+/// the org switcher so a sub-user can view the OWNER's org from the phone.
+#[tauri::command]
+pub async fn cloud_orgs_list(app: tauri::AppHandle) -> Result<Vec<OrgSummary>, ApiError> {
+    let Some(token) = crate::auth::load_token(&app) else {
+        return Err(unauth());
+    };
+    orgs::list(&token).await
+}
+
+/// Point every subsequent cloud call at a specific org (sent as the
+/// `X-LocalForge-Org` header, membership-verified server-side). Set on org
+/// switch so machine listing + server list resolve to the OWNER's org;
+/// cleared on sign-out.
+#[tauri::command(rename_all = "camelCase")]
+pub fn cloud_set_active_org(org_id: Option<String>) {
+    localforge_cloud_client::api::set_active_org(org_id);
 }
 
 /// Invite a sub-user by email with a role (viewer|operator|admin). The

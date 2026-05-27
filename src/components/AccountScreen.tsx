@@ -3,18 +3,24 @@
  * Replaces the old "home" screen; navigation now lives in the tab bar.
  */
 import { useState } from 'react';
-import { Cloud, CloudOff, LogOut, RefreshCw } from 'lucide-react';
-import { cloudLogout, type Me } from '../lib/cloud';
+import { Cloud, CloudOff, LogOut, RefreshCw, Check, Users } from 'lucide-react';
+import { cloudLogout, type Me, type OrgSummary } from '../lib/cloud';
 
 export function AccountScreen({
   me,
   desktopOnline,
   onlineNodeIds,
+  orgs,
+  activeOrgId,
+  onSwitchOrg,
   onSignedOut,
 }: {
   me: Me;
   desktopOnline: boolean;
   onlineNodeIds: Set<string>;
+  orgs: OrgSummary[];
+  activeOrgId: string | null;
+  onSwitchOrg: (orgId: string | null) => void;
   onSignedOut: () => void;
 }) {
   const [loggingOut, setLoggingOut] = useState(false);
@@ -57,6 +63,35 @@ export function AccountScreen({
           </div>
         )}
       </section>
+
+      {orgs.length > 1 && (
+        <section className="card">
+          <div className="lf-sectlabel">Workspace</div>
+          {orgs.map((o) => {
+            const effective = activeOrgId ?? orgs.find((x) => x.isOwner)?.id ?? null;
+            const active = o.id === effective;
+            return (
+              <button
+                key={o.id}
+                type="button"
+                className="member-row"
+                style={{ width: '100%', background: 'none', border: 'none', textAlign: 'left', cursor: 'pointer' }}
+                onClick={() => onSwitchOrg(o.isOwner ? null : o.id)}
+              >
+                <div className={`lf-tile ${active ? '' : 'muted'}`}><Users size={16} /></div>
+                <div className="member-meta">
+                  <div className="member-name">
+                    {o.name}
+                    {o.isOwner && <span className="member-self">yours</span>}
+                  </div>
+                  <div className="member-email">{o.role}</div>
+                </div>
+                {active && <Check size={16} style={{ color: 'var(--accent, #22d3a8)' }} aria-label="Active" />}
+              </button>
+            );
+          })}
+        </section>
+      )}
 
       <section className="card">
         <div className="card-row" style={{ alignItems: 'center' }}>

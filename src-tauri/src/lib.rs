@@ -61,6 +61,8 @@ pub fn run() {
             nodes::cloud_list_machines,
             orgs::cloud_org_me,
             orgs::cloud_org_invite,
+            orgs::cloud_orgs_list,
+            orgs::cloud_set_active_org,
             vault::cloud_sync_key_unlock,
             vault::cloud_sync_key_status,
             relay::cloud_relay_start,

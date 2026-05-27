@@ -21,9 +21,12 @@ import { TeamScreen } from './components/TeamScreen';
 import { AccountScreen } from './components/AccountScreen';
 import {
   cloudMe,
+  cloudOrgsList,
   cloudRelayStart,
   cloudRelayStop,
+  cloudSetActiveOrg,
   type Me,
+  type OrgSummary,
   type ServerSummary,
 } from './lib/cloud';
 import { useSwipeBack } from './lib/useSwipeBack';
@@ -49,6 +52,12 @@ function App() {
   // server detail — doesn't unmount + refetch (relay/request budget) and
   // doesn't lose live discovery state. See task #82.
   const [visited, setVisited] = useState<Set<Tab>>(() => new Set<Tab>(['servers']));
+  // Every org the user belongs to + the one they're currently viewing. A
+  // sub-user switches to the OWNER's org to see + control its servers;
+  // `null` means their own primary org. Drives the X-LocalForge-Org header +
+  // which org the relay connects to.
+  const [orgs, setOrgs] = useState<OrgSummary[]>([]);
+  const [activeOrgId, setActiveOrgId] = useState<string | null>(null);
 
   useEffect(() => {
     cloudMe()
@@ -81,13 +90,29 @@ function App() {
     state.kind === 'signed-in' && state.me.subscription.plan !== 'free'
       ? state.me.id
       : null;
+  const signedInId = state.kind === 'signed-in' ? state.me.id : null;
+
+  // Load the orgs the user belongs to (for the switcher). Reset the active
+  // org when the signed-in user changes / signs out.
+  useEffect(() => {
+    if (!signedInId) {
+      setOrgs([]);
+      setActiveOrgId(null);
+      return;
+    }
+    void cloudOrgsList().then(setOrgs).catch(() => setOrgs([]));
+  }, [signedInId]);
+
   useEffect(() => {
     if (!relayUserId) return;
-    void cloudRelayStart().catch((e) => console.warn('relay start failed', e));
+    // Point HTTP (X-LocalForge-Org) AND the relay at the active org before
+    // connecting, so a sub-user observes the OWNER's org. Re-runs on switch.
+    void cloudSetActiveOrg(activeOrgId).catch(() => {});
+    void cloudRelayStart(activeOrgId).catch((e) => console.warn('relay start failed', e));
     return () => {
       void cloudRelayStop();
     };
-  }, [relayUserId]);
+  }, [relayUserId, activeOrgId]);
 
   // Track which executors are on the relay, from the `hello` peer list +
   // `presence` join/leave. Two kinds matter:
@@ -169,6 +194,15 @@ function App() {
     });
   }, []);
 
+  // Switch the active org: set the HTTP header FIRST (so the remounted tab
+  // screens fetch against the right org), then flip state — which both
+  // remounts the tabs (via the key below) and restarts the relay on the new
+  // org (the effect above).
+  const switchOrg = useCallback(async (orgId: string | null) => {
+    try { await cloudSetActiveOrg(orgId); } catch { /* falls back to primary */ }
+    setActiveOrgId(orgId);
+  }, []);
+
   // Enable the left-edge swipe only when an overlay is open.
   const canGoBack = state.kind === 'signed-in' && state.overlay !== null;
   useSwipeBack(goBack, canGoBack);
@@ -211,7 +245,9 @@ function App() {
       {/* Tab shell stays mounted (hidden under an overlay) so its screens
           and live discovery survive opening a server detail. */}
       <div className="tabbed" style={{ display: state.overlay ? 'none' : 'flex' }}>
-        <div className="tab-scroll">
+        {/* Keyed on the active org so switching remounts the tab screens —
+            they refetch against the newly-active org (header already set). */}
+        <div className="tab-scroll" key={`org-${activeOrgId ?? 'primary'}`}>
           {TAB_ORDER.map((t) =>
             visited.has(t) ? (
               <div key={t} style={{ display: state.tab === t ? 'block' : 'none' }}>
@@ -259,6 +295,9 @@ function App() {
             me={s.me}
             desktopOnline={desktopOnline}
             onlineNodeIds={onlineNodeIds}
+            orgs={orgs}
+            activeOrgId={activeOrgId}
+            onSwitchOrg={switchOrg}
             onSignedOut={() => setState({ kind: 'signed-out' })}
           />
         );
