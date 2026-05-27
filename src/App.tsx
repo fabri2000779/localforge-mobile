@@ -10,7 +10,7 @@
  * audit log etc.).
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { listen } from '@tauri-apps/api/event';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { LoginScreen } from './components/LoginScreen';
 import { TabBar, type Tab } from './components/TabBar';
 import { ServerListScreen, type ServerStatus } from './components/ServerListScreen';
@@ -19,12 +19,17 @@ import { ServerConfigScreen } from './components/ServerConfigScreen';
 import { MachinesScreen } from './components/MachinesScreen';
 import { TeamScreen } from './components/TeamScreen';
 import { AccountScreen } from './components/AccountScreen';
+import { AcceptInviteBanner } from './components/AcceptInviteBanner';
 import {
+  cloudClearOrgDek,
   cloudMe,
   cloudOrgsList,
+  cloudProcessGrants,
   cloudRelayStart,
   cloudRelayStop,
   cloudSetActiveOrg,
+  cloudUnlockOrgDek,
+  subscribeInviteReceived,
   type Me,
   type OrgSummary,
   type ServerSummary,
@@ -58,6 +63,9 @@ function App() {
   // which org the relay connects to.
   const [orgs, setOrgs] = useState<OrgSummary[]>([]);
   const [activeOrgId, setActiveOrgId] = useState<string | null>(null);
+  // A pending team invitation (from a `localforge://invite` deep link), shown
+  // as a top banner until the user accepts or dismisses it.
+  const [invite, setInvite] = useState<{ token: string; secret?: string | null } | null>(null);
 
   useEffect(() => {
     cloudMe()
@@ -75,6 +83,19 @@ function App() {
         console.error('cloud_me failed:', e);
         setState({ kind: 'signed-out' });
       });
+  }, []);
+
+  // Listen for invitation deep links at the app root (any state), so tapping
+  // an invite link surfaces the accept banner even before sign-in. Persists
+  // until the user accepts or dismisses.
+  useEffect(() => {
+    let un: UnlistenFn | null = null;
+    void subscribeInviteReceived((p) => setInvite(p)).then((fn) => {
+      un = fn;
+    });
+    return () => {
+      if (un) un();
+    };
   }, []);
 
   // Relay lifecycle lives here, at the app root, so the WebSocket
@@ -200,16 +221,51 @@ function App() {
   // org (the effect above).
   const switchOrg = useCallback(async (orgId: string | null) => {
     try { await cloudSetActiveOrg(orgId); } catch { /* falls back to primary */ }
+    // The decryption key follows the active org: our own DEK for an org we own
+    // (primary or owned), the borrowed org DEK for another owner's org.
+    const target = orgId ? orgs.find((o) => o.id === orgId) : null;
+    const owned = orgId === null || (target?.isOwner ?? false);
+    if (owned) {
+      try { await cloudClearOrgDek(); } catch { /* */ }
+      // Owner: seal grants to any members still waiting (the "confirm" step).
+      // Fire-and-forget — needs our sync key unlocked; harmless no-op/412 else.
+      const ownId = orgId ?? orgs.find((o) => o.isOwner)?.id;
+      if (ownId) void cloudProcessGrants(ownId).catch(() => {});
+    } else if (orgId) {
+      try { await cloudUnlockOrgDek(orgId); } catch { /* surfaces as locked in config */ }
+    }
     setActiveOrgId(orgId);
-  }, []);
+  }, [orgs]);
+
+  // After accepting an invite: refresh the org list, switch to the joined org
+  // (which unlocks its DEK), and land on the Servers tab.
+  const onInviteAccepted = useCallback(async (orgId: string) => {
+    setInvite(null);
+    try { setOrgs(await cloudOrgsList()); } catch { /* keep current list */ }
+    await switchOrg(orgId);
+    setState((s) => (s.kind === 'signed-in' ? { ...s, tab: 'servers', overlay: null } : s));
+  }, [switchOrg]);
 
   // Enable the left-edge swipe only when an overlay is open.
   const canGoBack = state.kind === 'signed-in' && state.overlay !== null;
   useSwipeBack(goBack, canGoBack);
 
+  // Rendered (fixed-position) above whatever shell is showing, so an invite
+  // can be accepted from the login screen or any tab.
+  const inviteBanner = invite ? (
+    <AcceptInviteBanner
+      token={invite.token}
+      secret={invite.secret}
+      signedIn={state.kind === 'signed-in'}
+      onAccepted={onInviteAccepted}
+      onDismiss={() => setInvite(null)}
+    />
+  ) : null;
+
   if (state.kind === 'loading') {
     return (
       <div className="app-shell splash">
+        {inviteBanner}
         <img src="/favicon.svg" width={64} height={64} alt="" />
         <span>LocalForge</span>
       </div>
@@ -219,6 +275,7 @@ function App() {
   if (state.kind === 'signed-out') {
     return (
       <div className="app-shell">
+        {inviteBanner}
         <LoginScreen
           onSignedIn={(me) =>
             setState({
@@ -242,6 +299,7 @@ function App() {
 
   return (
     <div className="app-shell">
+      {inviteBanner}
       {/* Tab shell stays mounted (hidden under an overlay) so its screens
           and live discovery survive opening a server detail. */}
       <div className="tabbed" style={{ display: state.overlay ? 'none' : 'flex' }}>
@@ -298,6 +356,7 @@ function App() {
             orgs={orgs}
             activeOrgId={activeOrgId}
             onSwitchOrg={switchOrg}
+            onJoinedOrg={onInviteAccepted}
             onSignedOut={() => setState({ kind: 'signed-out' })}
           />
         );
@@ -323,6 +382,7 @@ function App() {
     return (
       <ServerConfigScreen
         server={server}
+        activeOrgId={activeOrgId}
         onBack={() => setState({ ...s, overlay: { kind: 'server', server } })}
       />
     );

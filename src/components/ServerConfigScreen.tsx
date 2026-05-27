@@ -16,11 +16,12 @@
  *      container and re-syncs; the result comes back as a `cmd_result`.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Lock, Save, Loader2, AlertOctagon, ShieldOff } from 'lucide-react';
+import { ArrowLeft, Lock, Save, Loader2, AlertOctagon, ShieldOff, RefreshCw } from 'lucide-react';
 import {
   cloudSyncKeyStatus,
   cloudSyncKeyUnlock,
   cloudServerConfig,
+  cloudUnlockOrgDek,
   cloudRelaySendCmd,
   subscribeRelayEvent,
   isCloudError,
@@ -31,12 +32,16 @@ import {
 
 interface Props {
   server: ServerSummary;
+  /** The org currently being viewed (null = our own primary). When set and we
+   *  lack the key, we try to pull that org's grant before gating. */
+  activeOrgId: string | null;
   onBack: () => void;
 }
 
 type Phase =
   | { kind: 'loading' }
   | { kind: 'not_set_up' }
+  | { kind: 'no_access' }
   | { kind: 'locked'; busy: boolean; err: string | null }
   | { kind: 'ready'; cfg: ServerConfigView }
   | { kind: 'error'; msg: string };
@@ -45,7 +50,7 @@ function errText(e: unknown): string {
   return isCloudError(e) ? e.message ?? e.code : String(e);
 }
 
-export function ServerConfigScreen({ server, onBack }: Props) {
+export function ServerConfigScreen({ server, activeOrgId, onBack }: Props) {
   const [phase, setPhase] = useState<Phase>({ kind: 'loading' });
   const [passphrase, setPassphrase] = useState('');
   const [edited, setEdited] = useState<Record<string, string>>({});
@@ -54,35 +59,51 @@ export function ServerConfigScreen({ server, onBack }: Props) {
   const awaitingId = useRef<string | null>(null);
 
   const loadConfig = useCallback(async () => {
+    const decrypt = () => cloudServerConfig(server.id);
     try {
-      const cfg = await cloudServerConfig(server.id);
+      const cfg = await decrypt();
       setEdited({ ...cfg.config });
       setPhase({ kind: 'ready', cfg });
+      return;
     } catch (e) {
-      if (isCloudError(e) && e.code === 'locked') {
-        setPhase({ kind: 'locked', busy: false, err: null });
-      } else {
+      if (!(isCloudError(e) && e.code === 'locked')) {
         setPhase({ kind: 'error', msg: errText(e) });
+        return;
       }
     }
-  }, [server.id]);
+    // 'locked' = no active DEK. If we're viewing another owner's org, try to
+    // (re)fetch the org grant first — the owner may have confirmed us since we
+    // switched in (or our handoff cache is enough).
+    if (activeOrgId) {
+      const r = await cloudUnlockOrgDek(activeOrgId).catch(() => null);
+      if (r === 'granted') {
+        try {
+          const cfg = await decrypt();
+          setEdited({ ...cfg.config });
+          setPhase({ kind: 'ready', cfg });
+          return;
+        } catch {
+          /* fall through to the gate */
+        }
+      }
+      if (r === 'no_grant') {
+        setPhase({ kind: 'no_access' });
+        return;
+      }
+      // r === 'no_keypair' → we need our own sync key first (handled below).
+    }
+    // Decide the gate from our own sync-key status.
+    const s = await cloudSyncKeyStatus().catch(() => 'locked' as SyncKeyStatus);
+    if (s === 'not_set_up') setPhase({ kind: 'not_set_up' });
+    else if (s === 'unlocked') setPhase({ kind: 'no_access' });
+    else setPhase({ kind: 'locked', busy: false, err: null });
+  }, [server.id, activeOrgId]);
 
-  // Decide the initial phase from the sync-key status.
+  // Always attempt to decrypt first (works for a handoff member whose org DEK
+  // is cached); loadConfig falls back to the right gate when there's no key.
   useEffect(() => {
-    let cancelled = false;
-    cloudSyncKeyStatus()
-      .then((s: SyncKeyStatus) => {
-        if (cancelled) return;
-        if (s === 'not_set_up') setPhase({ kind: 'not_set_up' });
-        else if (s === 'locked') setPhase({ kind: 'locked', busy: false, err: null });
-        else void loadConfig();
-      })
-      .catch((e) => {
-        if (!cancelled) setPhase({ kind: 'error', msg: errText(e) });
-      });
-    return () => {
-      cancelled = true;
-    };
+    setPhase({ kind: 'loading' });
+    void loadConfig();
   }, [loadConfig]);
 
   // Catch the cmd_result for our update_config command.
@@ -192,11 +213,34 @@ export function ServerConfigScreen({ server, onBack }: Props) {
       {phase.kind === 'not_set_up' && (
         <section className="card cfg-notice">
           <ShieldOff size={20} />
-          <h2>Sync isn’t set up</h2>
+          <h2>Set up your sync key</h2>
           <p>
-            Open LocalForge on your desktop and set up a sync passphrase
-            first. Until then there’s no encrypted config to read here.
+            Create a sync passphrase in the <strong>Account</strong> tab to
+            unlock encrypted configs. It also lets the workspace owner grant you
+            access.
           </p>
+        </section>
+      )}
+
+      {phase.kind === 'no_access' && (
+        <section className="card cfg-notice">
+          <ShieldOff size={20} />
+          <h2>Waiting for access</h2>
+          <p>
+            You’ve joined this workspace, but the owner hasn’t granted you the
+            decryption key yet. It unlocks automatically once they confirm you
+            (Team tab on their device).
+          </p>
+          <button
+            type="button"
+            className="cfg-btn"
+            onClick={() => {
+              setPhase({ kind: 'loading' });
+              void loadConfig();
+            }}
+          >
+            <RefreshCw size={15} /> Check again
+          </button>
         </section>
       )}
 

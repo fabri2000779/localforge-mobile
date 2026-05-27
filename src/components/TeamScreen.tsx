@@ -5,10 +5,11 @@
  * upsell.
  */
 import { useEffect, useState } from 'react';
-import { Users, Send, RefreshCw, Loader2 } from 'lucide-react';
+import { Users, Send, RefreshCw, Loader2, ShieldCheck } from 'lucide-react';
 import {
   cloudOrgInvite,
   cloudOrgMe,
+  cloudProcessGrants,
   isCloudError,
   type Me,
   type Member,
@@ -25,16 +26,36 @@ const ROLES = ['viewer', 'operator', 'admin'] as const;
 export function TeamScreen({ me }: { me: Me }) {
   const isTeam = me.subscription.plan === 'team';
   const [state, setState] = useState<State>({ kind: 'loading' });
+  // Owner-only: result of sealing the org key to pending members (the "confirm"
+  // step). Set after an automatic or manual run.
+  const [grantNote, setGrantNote] = useState<string | null>(null);
 
   async function load() {
     try {
       const org = await cloudOrgMe();
       setState({ kind: 'ready', org });
+      // Owner side: as soon as we view the team, seal our encryption key to any
+      // members who joined but aren't granted yet — so they can decrypt our
+      // servers. This is the owner "accepting them back".
+      if (org.isOwner) void confirmMembers(org.id);
     } catch (e) {
       setState({
         kind: 'error',
         message: isCloudError(e) ? (e.message ?? `Couldn't load your team (${e.code}).`) : 'Something went wrong.',
       });
+    }
+  }
+
+  async function confirmMembers(orgId: string) {
+    try {
+      const n = await cloudProcessGrants(orgId);
+      setGrantNote(
+        n > 0 ? `Granted access to ${n} member${n === 1 ? '' : 's'}.` : null,
+      );
+    } catch (e) {
+      if (isCloudError(e) && e.code === 'locked') {
+        setGrantNote('Unlock your sync key (Account tab) to grant member access.');
+      }
     }
   }
 
@@ -93,6 +114,22 @@ export function TeamScreen({ me }: { me: Me }) {
               <MemberRow key={m.id} member={m} isSelf={m.id === me.id} />
             ))}
           </section>
+
+          {org.isOwner && (
+            <section className="card" style={{ padding: '12px 14px', marginTop: 10 }}>
+              <button
+                type="button"
+                className="ghost-btn"
+                style={{ width: '100%', justifyContent: 'center', display: 'flex', alignItems: 'center', gap: 8 }}
+                onClick={() => confirmMembers(org.id)}
+              >
+                <ShieldCheck size={15} /> Confirm member access
+              </button>
+              <p className="list-state-hint" style={{ marginTop: 8 }}>
+                {grantNote ?? 'Seals your encryption key to members who joined, so they can see your servers. Runs automatically when you open this tab.'}
+              </p>
+            </section>
+          )}
 
           {canInvite && <InviteForm orgId={org.id} onInvited={load} />}
         </>

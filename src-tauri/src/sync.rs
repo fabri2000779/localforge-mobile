@@ -89,7 +89,9 @@ pub async fn cloud_server_config(
             message: None,
         });
     };
-    let Some(dek) = crate::vault::load_dek(&app) else {
+    // The ACTIVE-org DEK: our own when viewing our org, or the org DEK we
+    // unlocked when a sub-user is viewing the owner's org.
+    let Some(dek) = crate::vault::active_dek(&app) else {
         return Err(ApiError::Server {
             status: 412,
             code: "locked".into(),

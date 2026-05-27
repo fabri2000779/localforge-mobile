@@ -187,6 +187,45 @@ export function cloudSetActiveOrg(orgId: string | null): Promise<void> {
   return invoke('cloud_set_active_org', { orgId });
 }
 
+/** Accept an invitation from the phone. `token` is the invitation id; `secret`
+ *  is the handoff key from the link #fragment (when present) so the new member
+ *  decrypts the owner's servers immediately. Returns the joined org id. */
+export function cloudOrgsAcceptInvite(token: string, secret?: string | null): Promise<string> {
+  return invoke<string>('cloud_orgs_accept_invite', { token, secret: secret ?? null });
+}
+
+/** Sub-user side: unlock the org DEK for an org we don't own so we can decrypt
+ *  the owner's server configs. 'granted' | 'no_grant' (owner hasn't sealed us
+ *  yet) | 'no_keypair' (set up your sync key first). */
+export type UnlockOrgResult = 'granted' | 'no_grant' | 'no_keypair';
+export function cloudUnlockOrgDek(orgId: string): Promise<UnlockOrgResult> {
+  return invoke<UnlockOrgResult>('cloud_unlock_org_dek', { orgId });
+}
+
+/** Switch decryption back to our own DEK (when returning to an org we own). */
+export function cloudClearOrgDek(): Promise<void> {
+  return invoke('cloud_clear_org_dek');
+}
+
+/** Owner side ("confirm"): seal our org DEK to every member who joined but has
+ *  no grant yet. Returns how many were newly granted. Requires our sync key
+ *  unlocked (rejects with code `locked` otherwise). No-op if we're not the
+ *  owner. */
+export function cloudProcessGrants(orgId: string): Promise<number> {
+  return invoke<number>('cloud_process_grants', { orgId });
+}
+
+/** Deep-link invite received (`localforge://invite`). The payload carries the
+ *  invitation token + optional handoff secret. */
+export function subscribeInviteReceived(
+  handler: (p: { token: string; secret?: string | null }) => void,
+): Promise<UnlistenFn> {
+  return listen<{ token: string; secret?: string | null }>(
+    'cloud://invite-received',
+    (e) => handler(e.payload),
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Sync key (DEK) — needed to decrypt a server's config for the
 // viewer/editor. The DEK is unwrapped from `me.syncKey.wrappedDek` with
@@ -206,6 +245,14 @@ export function cloudSyncKeyStatus(): Promise<SyncKeyStatus> {
  *  the owner never configured sync. */
 export function cloudSyncKeyUnlock(secret: string): Promise<void> {
   return invoke('cloud_sync_key_unlock', { secret });
+}
+
+/** Set up envelope encryption from the phone (members who never used the
+ *  desktop). Picks a fresh DEK + the chosen passphrase as the KEK, and
+ *  publishes the user's keypair so they can receive org grants. Only call when
+ *  status is `not_set_up` (the cloud 409s if a key already exists). */
+export function cloudSyncKeySetup(secret: string): Promise<void> {
+  return invoke('cloud_sync_key_setup', { secret });
 }
 
 /** Decrypted config of one synced server. `gameType` is the template

@@ -142,10 +142,60 @@ async fn handle_invite(app: AppHandle, url: String) {
         emit_error(&app, "no_invite_token", "the invite URL had no token");
         return;
     };
+    // Handoff secret rides in the link's #fragment (`#k=…`, never sent to a
+    // server) or, via an HTTPS→deep-link web bridge, as a `&k=` query. Accept
+    // either; a plain invite has none → the member falls back to the owner's
+    // background grant.
+    let secret = shared::parse_query_param(&url, "k").or_else(|| parse_fragment_param(&url, "k"));
     let _ = app.emit(
         "cloud://invite-received",
-        serde_json::json!({ "token": token }),
+        serde_json::json!({ "token": token, "secret": secret }),
     );
+}
+
+/// Pull `key` out of a URL `#fragment` (`…#k=value&other=…`). Fragments are
+/// client-side only and never transmitted, which is why the invite handoff
+/// secret travels there. Not behind the mobile cfg so it's unit-tested on the
+/// host (`allow(dead_code)` because its only caller, `handle_invite`, is
+/// mobile-gated).
+#[allow(dead_code)]
+fn parse_fragment_param(url: &str, key: &str) -> Option<String> {
+    let frag = url.split_once('#')?.1;
+    frag.split('&').find_map(|pair| {
+        let (k, v) = pair.split_once('=')?;
+        (k == key).then(|| v.to_string())
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_fragment_param;
+
+    #[test]
+    fn fragment_secret_parsed() {
+        assert_eq!(
+            parse_fragment_param("localforge://invite?token=abc#k=SECRET", "k").as_deref(),
+            Some("SECRET"),
+        );
+    }
+
+    #[test]
+    fn fragment_among_other_params() {
+        assert_eq!(
+            parse_fragment_param("https://localforge.gg/invite?token=abc#a=1&k=XYZ&b=2", "k")
+                .as_deref(),
+            Some("XYZ"),
+        );
+    }
+
+    #[test]
+    fn no_fragment_is_none() {
+        assert_eq!(
+            parse_fragment_param("localforge://invite?token=abc", "k"),
+            None,
+        );
+        assert_eq!(parse_fragment_param("plain-token", "k"), None);
+    }
 }
 
 #[cfg(any(target_os = "android", target_os = "ios"))]
