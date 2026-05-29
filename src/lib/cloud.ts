@@ -311,6 +311,49 @@ export function subscribeRelayEvent(
 }
 
 // ---------------------------------------------------------------------------
+// Org backup targets — named list, stored encrypted-with-DEK in the cloud.
+// ---------------------------------------------------------------------------
+
+export interface BackupTargetInput {
+  endpoint: string;
+  region: string;
+  bucket: string;
+  accessKey: string;
+  secretKey: string;
+  pathStyle: boolean;
+}
+
+/** Redacted view (no secretKey). */
+export interface BackupTargetView {
+  id: string;
+  name: string;
+  endpoint: string;
+  region: string;
+  bucket: string;
+  accessKey: string;
+  pathStyle: boolean;
+}
+
+/** List the org's backup targets (decrypted with the org DEK). */
+export function cloudBackupTargetsList(): Promise<BackupTargetView[]> {
+  return invoke('cloud_backup_targets_list');
+}
+
+/** Add/update a named backup target (encrypts with org DEK, POST to cloud). */
+export function cloudBackupTargetAdd(
+  id: string,
+  name: string,
+  credentials: BackupTargetInput,
+): Promise<BackupTargetView> {
+  return invoke('cloud_backup_target_add', { id, name, credentials });
+}
+
+/** Remove a backup target by id. */
+export function cloudBackupTargetDelete(id: string): Promise<void> {
+  return invoke('cloud_backup_target_delete', { id });
+}
+
+// ---------------------------------------------------------------------------
 // Backups + schedules (driven over the relay; the host holds the S3 creds —
 // the secret never reaches the phone or the cloud). Wire shapes mirror the
 // Rust `BackupEntry` / `Schedule` / `ScheduleAction` (all camelCase).

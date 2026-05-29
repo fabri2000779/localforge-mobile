@@ -4,6 +4,7 @@
 //! source of truth for the Tauri builder configuration.
 
 mod auth;
+mod backup_targets;
 mod iap;
 mod nodes;
 mod oauth;
@@ -71,6 +72,9 @@ pub fn run() {
             vault::cloud_clear_org_dek,
             vault::cloud_invalidate_local_dek,
             vault::cloud_process_grants,
+            backup_targets::cloud_backup_targets_list,
+            backup_targets::cloud_backup_target_add,
+            backup_targets::cloud_backup_target_delete,
             relay::cloud_relay_start,
             relay::cloud_relay_stop,
             relay::cloud_relay_send_cmd,

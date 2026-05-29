@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Per-server detail / control screen.
  *
  * The mobile sends control commands (start / stop / restart) through
@@ -25,7 +25,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   Activity,
+  Archive,
   ArrowLeft,
+  Clock,
   Play,
   RefreshCcw,
   Send,
@@ -58,6 +60,7 @@ interface Props {
   onOpenConfig: () => void;
 }
 
+type Tab = 'console' | 'backups' | 'schedules';
 type Action = 'start' | 'stop' | 'restart';
 
 type Toast =
@@ -133,6 +136,7 @@ interface LogLine {
 }
 
 export function ServerDetailScreen({ server, initialStatus, desktopOnline, onlineNodeIds, onBack, onOpenConfig }: Props) {
+  const [activeTab, setActiveTab] = useState<Tab>('console');
   const [pending, setPending] = useState<Action | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
   const [logs, setLogs] = useState<LogLine[]>([]);
@@ -479,14 +483,34 @@ export function ServerDetailScreen({ server, initialStatus, desktopOnline, onlin
           onClick={() => fire('restart')}
         />
       </div>
-      {!executorOnline && (
+      {/* Section tab bar */}
+      <div className="detail-tabs" role="tablist">
+        <button role="tab" className={"detail-tab" + (activeTab === "console" ? " detail-tab--active" : "")} onClick={() => setActiveTab("console")} aria-selected={activeTab === "console"}>
+          <Terminal size={13} /> Console
+        </button>
+        <button role="tab" className={"detail-tab" + (activeTab === "backups" ? " detail-tab--active" : "")} onClick={() => setActiveTab("backups")} aria-selected={activeTab === "backups"}>
+          <Archive size={13} /> Backups
+        </button>
+        <button role="tab" className={"detail-tab" + (activeTab === "schedules" ? " detail-tab--active" : "")} onClick={() => setActiveTab("schedules")} aria-selected={activeTab === "schedules"}>
+          <Clock size={13} /> Schedules
+        </button>
+      </div>
+
+      {activeTab === 'backups' && (
+        <ServerBackupsSection serverId={server.id} nodeId={nodeId} online={executorOnline} />
+      )}
+      {activeTab === 'schedules' && (
+        <ServerSchedulesSection serverId={server.id} nodeId={nodeId} online={executorOnline} />
+      )}
+
+      {activeTab === 'console' && !executorOnline && (
         <p className="detail-hint">
-          Neither your LocalForge desktop nor this server’s agent is connected —
+          Neither your LocalForge desktop nor this server's agent is connected —
           bring one online to start, stop or restart it.
         </p>
       )}
 
-      {consoleMode === 'live' && (
+      {activeTab === 'console' && consoleMode === 'live' && (
         <section className="card stats-card">
           <div className="console-header">
             <Activity size={14} />
@@ -511,7 +535,8 @@ export function ServerDetailScreen({ server, initialStatus, desktopOnline, onlin
         </section>
       )}
 
-      <section className="card console-card">
+      {activeTab === 'console' && (
+        <section className="card console-card">
         <div className="console-header">
           <Terminal size={14} />
           <span>Console</span>
@@ -520,8 +545,8 @@ export function ServerDetailScreen({ server, initialStatus, desktopOnline, onlin
         <div ref={logViewportRef} onScroll={onLogScroll} className="console-viewport" role="log">
           {consoleMode === 'offline' ? (
             <div className="console-empty">
-              Your LocalForge desktop (or VPS agent) isn’t connected, so there’s
-              nothing to control or stream right now. Open it and it’ll
+              Your LocalForge desktop (or VPS agent) isn't connected, so there's
+              nothing to control or stream right now. Open it and it'll
               reconnect here automatically.
             </div>
           ) : logs.length === 0 ? (
@@ -581,10 +606,8 @@ export function ServerDetailScreen({ server, initialStatus, desktopOnline, onlin
             <Send size={15} />
           </button>
         </form>
-      </section>
-
-      <ServerBackupsSection serverId={server.id} nodeId={nodeId} online={executorOnline} />
-      <ServerSchedulesSection serverId={server.id} nodeId={nodeId} online={executorOnline} />
+        </section>
+      )}
 
       <button type="button" className="cfg-btn detail-cfg" onClick={onOpenConfig}>
         <SlidersHorizontal size={15} />
