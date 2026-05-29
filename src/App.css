@@ -1019,31 +1019,39 @@ input, textarea {
 .tabbar-btn.on { color: var(--accent); }
 .tabbar-btn:active { color: var(--text); }
 
-/* ── iOS: Liquid-Glass-style tab bar ─────────────────────────────────────
-   Translucent, heavily blurred + saturated edge-to-edge bar with a top
-   specular hairline (the glass "edge") and a soft glass capsule behind the
-   active tab. A CSS approximation of iOS 26's material — convincing in a
-   WebView, though not the native refractive glass. */
+/* ── iOS: floating Liquid-Glass tab bar (WhatsApp-style shape) ────────────
+   A detached, rounded, translucent bar that floats above the home indicator
+   with the content visible THROUGH it. Heavy blur + saturation = frosted
+   glass; a full-edge specular rim + a drop shadow sell the "floating glass".
+   More translucent than WhatsApp's bar on purpose (the see-through ask). */
 .plat-ios .tabbar {
-  border-top: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(18, 22, 31, 0.62);
-  -webkit-backdrop-filter: blur(26px) saturate(180%);
-  backdrop-filter: blur(26px) saturate(180%);
+  left: 14px;
+  right: 14px;
+  bottom: calc(env(safe-area-inset-bottom) + 10px);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 30px;
+  background: rgba(22, 26, 36, 0.5);
+  -webkit-backdrop-filter: blur(30px) saturate(180%);
+  backdrop-filter: blur(30px) saturate(180%);
+  padding: 9px 8px;
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.18),
-    0 -8px 24px rgba(0, 0, 0, 0.28);
+    0 12px 34px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22);
 }
-.plat-ios .tabbar-btn { border-radius: 16px; }
+.plat-ios .tabbar-btn { border-radius: 18px; }
 .plat-ios .tabbar-btn.on::before {
   content: '';
   position: absolute;
-  inset: 1px 8px;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.1);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
-  -webkit-backdrop-filter: blur(6px);
-  backdrop-filter: blur(6px);
+  inset: 2px 6px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
   z-index: 0;
+}
+/* The floating bar has a taller footprint than the edge-to-edge one, so the
+   scrollable content needs extra bottom clearance to not hide behind it. */
+.plat-ios .tab-scroll {
+  padding-bottom: calc(env(safe-area-inset-bottom) + 96px);
 }
 
 /* ── Android: Material 3 navigation bar ──────────────────────────────────
