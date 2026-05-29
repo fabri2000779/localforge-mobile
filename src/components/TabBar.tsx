@@ -33,8 +33,13 @@ export function TabBar({
           className={`tabbar-btn ${active === id ? 'on' : ''}`}
           onClick={() => onChange(id)}
         >
-          <Icon size={21} strokeWidth={active === id ? 2.4 : 2} />
-          {label}
+          {/* icon + label are wrapped so the CSS can place the platform
+              indicator behind just the icon (Material pill) or the whole
+              button (iOS glass capsule). */}
+          <span className="tabbar-ico">
+            <Icon size={21} strokeWidth={active === id ? 2.4 : 2} />
+          </span>
+          <span className="tabbar-lbl">{label}</span>
         </button>
       ))}
     </nav>

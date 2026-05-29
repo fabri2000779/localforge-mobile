@@ -981,6 +981,8 @@ input, textarea {
   right: 0;
   z-index: 20;
   display: flex;
+  /* Neutral fallback (desktop dev preview). The platform rules below swap the
+     material per OS — lib/platform.ts tags <html> with plat-ios / plat-android. */
   border-top: 1px solid var(--border);
   background: rgba(8, 11, 18, 0.92);
   -webkit-backdrop-filter: blur(14px);
@@ -989,6 +991,7 @@ input, textarea {
 }
 .tabbar-btn {
   flex: 1;
+  position: relative;
   background: none;
   border: 0;
   display: flex;
@@ -1003,8 +1006,65 @@ input, textarea {
   cursor: pointer;
   transition: color 120ms ease;
 }
+.tabbar-ico {
+  display: grid;
+  place-items: center;
+  position: relative;
+  z-index: 1;
+}
+.tabbar-lbl {
+  position: relative;
+  z-index: 1;
+}
 .tabbar-btn.on { color: var(--accent); }
 .tabbar-btn:active { color: var(--text); }
+
+/* ── iOS: Liquid-Glass-style tab bar ─────────────────────────────────────
+   Translucent, heavily blurred + saturated edge-to-edge bar with a top
+   specular hairline (the glass "edge") and a soft glass capsule behind the
+   active tab. A CSS approximation of iOS 26's material — convincing in a
+   WebView, though not the native refractive glass. */
+.plat-ios .tabbar {
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(18, 22, 31, 0.62);
+  -webkit-backdrop-filter: blur(26px) saturate(180%);
+  backdrop-filter: blur(26px) saturate(180%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    0 -8px 24px rgba(0, 0, 0, 0.28);
+}
+.plat-ios .tabbar-btn { border-radius: 16px; }
+.plat-ios .tabbar-btn.on::before {
+  content: '';
+  position: absolute;
+  inset: 1px 8px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  z-index: 0;
+}
+
+/* ── Android: Material 3 navigation bar ──────────────────────────────────
+   Tonal, opaque surface (no blur) with the Material You signature: a pill
+   "active indicator" behind the selected icon. */
+.plat-android .tabbar {
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  padding-top: 6px;
+}
+.plat-android .tabbar-ico {
+  width: 56px;
+  height: 30px;
+  border-radius: 999px;
+  transition: background-color 150ms ease;
+}
+.plat-android .tabbar-btn.on .tabbar-ico {
+  background: var(--accent-glow);
+}
 .tabbar-badge {
   position: absolute;
   margin-left: 16px;

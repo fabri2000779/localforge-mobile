@@ -69,6 +69,7 @@ pub fn run() {
             vault::cloud_sync_key_status,
             vault::cloud_unlock_org_dek,
             vault::cloud_clear_org_dek,
+            vault::cloud_invalidate_local_dek,
             vault::cloud_process_grants,
             relay::cloud_relay_start,
             relay::cloud_relay_stop,

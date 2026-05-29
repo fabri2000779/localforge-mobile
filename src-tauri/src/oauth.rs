@@ -162,14 +162,65 @@ async fn handle_invite(app: AppHandle, url: String) {
 fn parse_fragment_param(url: &str, key: &str) -> Option<String> {
     let frag = url.split_once('#')?.1;
     frag.split('&').find_map(|pair| {
+        // split_once('=') keeps everything after the FIRST '=' as the value, so
+        // base64 padding ('==') survives. Percent-decode to match the JS side
+        // (decodeURIComponent), in case an email client / web→deep-link bridge
+        // percent-encoded the secret's +, /, or = characters.
         let (k, v) = pair.split_once('=')?;
-        (k == key).then(|| v.to_string())
+        (k == key).then(|| percent_decode(v))
     })
+}
+
+/// Minimal percent-decoder for the invite fragment secret. Only `%XX` triples
+/// are decoded; `+` is left as-is (fragments aren't form-encoded).
+#[allow(dead_code)]
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(h), Some(l)) = (hex_nibble(bytes[i + 1]), hex_nibble(bytes[i + 2])) {
+                out.push((h << 4) | l);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+#[allow(dead_code)]
+fn hex_nibble(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::parse_fragment_param;
+
+    #[test]
+    fn fragment_secret_percent_decoded() {
+        // A base64 secret whose +, /, = were percent-encoded by a link rewriter
+        // must come back intact (matches the JS decodeURIComponent path).
+        assert_eq!(
+            parse_fragment_param("localforge://invite?token=abc#k=ab%2Bc%2Fd%3D%3D", "k")
+                .as_deref(),
+            Some("ab+c/d=="),
+        );
+        // Padding kept even when NOT percent-encoded (split_once, not split).
+        assert_eq!(
+            parse_fragment_param("localforge://invite?token=abc#k=AAAA==", "k").as_deref(),
+            Some("AAAA=="),
+        );
+    }
 
     #[test]
     fn fragment_secret_parsed() {

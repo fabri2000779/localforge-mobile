@@ -357,6 +357,11 @@ pub async fn cloud_unlock_org_dek(
             message: None,
         });
     };
+    // Clear any previous borrowed-org override FIRST. Otherwise the `no_grant`
+    // / `no_keypair` return paths below would leave the PREVIOUS org's DEK
+    // installed, and a config view of the new org would decrypt with the wrong
+    // key. Only the success paths re-install an override.
+    set_active_dek_override(None);
     let have_keypair = load_x25519_sk(&app);
     if let Some(sk) = have_keypair {
         match localforge_cloud_client::keys::my_grant(&org_id, &token).await {
@@ -388,6 +393,51 @@ pub async fn cloud_unlock_org_dek(
 pub async fn cloud_clear_org_dek() -> Result<(), String> {
     set_active_dek_override(None);
     Ok(())
+}
+
+/// Invalidate this device's cached OWN DEK (memory + the on-disk `vault.dek`)
+/// so the next operation must re-derive it from the passphrase. Called when a
+/// key rotation happened on ANOTHER device: this device's cached DEK is now
+/// stale, and re-sealing member grants with it would clobber the freshly-sealed
+/// ones. After this the owner re-unlocks (Account tab) and gets the new key.
+#[tauri::command]
+pub async fn cloud_invalidate_local_dek(app: tauri::AppHandle) -> Result<(), String> {
+    if let Ok(mut c) = dek_cache().lock() {
+        *c = None;
+    }
+    set_active_dek_override(None);
+    if let Ok(p) = dek_path(&app) {
+        let _ = std::fs::remove_file(p);
+    }
+    Ok(())
+}
+
+/// Wipe ALL local key material. Called on logout so the next account signing in
+/// on a shared device can't inherit the previous user's DEK, org keys, or
+/// X25519 secret (which all otherwise persist in the sandboxed app-data dir).
+pub fn clear_local_keys(app: &tauri::AppHandle) {
+    if let Ok(mut c) = dek_cache().lock() {
+        *c = None;
+    }
+    set_active_dek_override(None);
+    if let Ok(p) = dek_path(app) {
+        let _ = std::fs::remove_file(p);
+    }
+    if let Ok(p) = x25519_path(app) {
+        let _ = std::fs::remove_file(p);
+    }
+    // Every cached borrowed-org DEK (org-dek-<id>.key).
+    if let Ok(dir) = app.path().app_data_dir() {
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for e in entries.flatten() {
+                let name = e.file_name();
+                let name = name.to_string_lossy();
+                if name.starts_with("org-dek-") && name.ends_with(".key") {
+                    let _ = std::fs::remove_file(e.path());
+                }
+            }
+        }
+    }
 }
 
 /// Owner side ("accept back" / confirm): seal OUR org DEK to every member who

@@ -207,6 +207,13 @@ export function cloudClearOrgDek(): Promise<void> {
   return invoke('cloud_clear_org_dek');
 }
 
+/** Invalidate this device's cached OWN DEK after a rotation done elsewhere, so
+ *  the next op re-derives it from the passphrase instead of re-sealing a stale
+ *  key. Used by the owner's phone on a `dek_rotated` relay event. */
+export function cloudInvalidateLocalDek(): Promise<void> {
+  return invoke('cloud_invalidate_local_dek');
+}
+
 /** Owner side ("confirm"): seal our org DEK to every member who joined but has
  *  no grant yet. Returns how many were newly granted. Requires our sync key
  *  unlocked (rejects with code `locked` otherwise). No-op if we're not the

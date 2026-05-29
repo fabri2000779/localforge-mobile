@@ -22,6 +22,7 @@ import { AccountScreen } from './components/AccountScreen';
 import { AcceptInviteBanner } from './components/AcceptInviteBanner';
 import {
   cloudClearOrgDek,
+  cloudInvalidateLocalDek,
   cloudMe,
   cloudOrgsList,
   cloudProcessGrants,
@@ -30,6 +31,7 @@ import {
   cloudSetActiveOrg,
   cloudUnlockOrgDek,
   subscribeInviteReceived,
+  subscribeRelayEvent,
   type Me,
   type OrgSummary,
   type ServerSummary,
@@ -135,6 +137,26 @@ function App() {
     };
   }, [relayUserId, activeOrgId]);
 
+  // React to a key rotation done on another device (a member was removed). Our
+  // cached DEK for the active org is now stale: a member re-opens the fresh
+  // sealed grant; an owner's phone invalidates its cached own-DEK so the next
+  // op re-derives it (rather than re-sealing the stale one over the new grants).
+  useEffect(() => {
+    if (!relayUserId) return;
+    let un: UnlistenFn | null = null;
+    void subscribeRelayEvent((msg) => {
+      if (msg?.kind !== 'dek_rotated') return;
+      const target = activeOrgId ? orgs.find((o) => o.id === activeOrgId) : null;
+      const owned = activeOrgId === null || (target?.isOwner ?? false);
+      if (owned) {
+        void cloudInvalidateLocalDek().catch(() => {});
+      } else if (activeOrgId) {
+        void cloudUnlockOrgDek(activeOrgId).catch(() => {});
+      }
+    }).then((fn) => { un = fn; });
+    return () => { if (un) un(); };
+  }, [relayUserId, activeOrgId, orgs]);
+
   // Track which executors are on the relay, from the `hello` peer list +
   // `presence` join/leave. Two kinds matter:
   //   - owner sockets (the user's desktop) → `desktopOnline`
@@ -220,19 +242,23 @@ function App() {
   // remounts the tabs (via the key below) and restarts the relay on the new
   // org (the effect above).
   const switchOrg = useCallback(async (orgId: string | null) => {
-    try { await cloudSetActiveOrg(orgId); } catch { /* falls back to primary */ }
-    // The decryption key follows the active org: our own DEK for an org we own
-    // (primary or owned), the borrowed org DEK for another owner's org.
     const target = orgId ? orgs.find((o) => o.id === orgId) : null;
     const owned = orgId === null || (target?.isOwner ?? false);
+    // DEK FIRST (it doesn't need the active-org header), THEN the header, then
+    // flip React state — so a config decrypt can't run against a half-applied
+    // org+key pair. The DEK follows the org: our own for an org we own, the
+    // borrowed sealed-grant DEK for another owner's org.
     if (owned) {
       try { await cloudClearOrgDek(); } catch { /* */ }
+    } else if (orgId) {
+      try { await cloudUnlockOrgDek(orgId); } catch { /* surfaces as locked in config */ }
+    }
+    try { await cloudSetActiveOrg(orgId); } catch { /* falls back to primary */ }
+    if (owned) {
       // Owner: seal grants to any members still waiting (the "confirm" step).
       // Fire-and-forget — needs our sync key unlocked; harmless no-op/412 else.
       const ownId = orgId ?? orgs.find((o) => o.isOwner)?.id;
       if (ownId) void cloudProcessGrants(ownId).catch(() => {});
-    } else if (orgId) {
-      try { await cloudUnlockOrgDek(orgId); } catch { /* surfaces as locked in config */ }
     }
     setActiveOrgId(orgId);
   }, [orgs]);

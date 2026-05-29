@@ -161,6 +161,9 @@ pub async fn cloud_logout(app: tauri::AppHandle) -> Result<(), ApiError> {
         let _ = auth::logout(&token).await;
     }
     clear_token(&app).map_err(|e| ApiError::Decode(format!("token store: {e}")))?;
+    // Wipe all local key material too — otherwise the next account on a shared
+    // device inherits the previous user's cached DEK / org keys / X25519 secret.
+    crate::vault::clear_local_keys(&app);
     Ok(())
 }
 

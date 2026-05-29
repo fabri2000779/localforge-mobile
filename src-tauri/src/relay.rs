@@ -45,16 +45,6 @@ pub struct RelayState {
     outbound: Mutex<Option<mpsc::UnboundedSender<String>>>,
 }
 
-/// Top-level frame shape. The cloud always stamps `type` and
-/// (for replicated frames) `epoch` + `seq`. We don't otherwise care
-/// what's in the body — the React layer is responsible for routing
-/// on `kind`.
-#[derive(Debug, Deserialize)]
-struct Envelope {
-    #[serde(rename = "type")]
-    ty: String,
-}
-
 #[tauri::command(rename_all = "camelCase")]
 pub async fn cloud_relay_start(
     app: AppHandle,
@@ -226,29 +216,22 @@ async fn fetch_org_id(token: &str) -> Result<String, ApiError> {
 }
 
 fn handle_text(app: &AppHandle, txt: &str) {
-    let env_msg: Envelope = match serde_json::from_str(txt) {
-        Ok(e) => e,
-        Err(_) => {
-            tracing::debug!("[relay] skipped non-envelope frame: {} bytes", txt.len());
-            return;
-        }
-    };
-
-    // Surface every recognised frame type to React as a typed event.
-    // Mobile doesn't process `cmd` because only owners do — but we
-    // emit a debug event for visibility in case the cloud's RBAC ever
-    // forwards one to us by mistake.
+    // Parse ONCE. We route on the top-level `type` and forward the whole value
+    // to React (which routes further on `kind`). Mobile doesn't process `cmd`
+    // (only owners do) but still surfaces it for visibility.
     let Ok(value) = serde_json::from_str::<serde_json::Value>(txt) else {
+        tracing::debug!("[relay] skipped non-JSON frame: {} bytes", txt.len());
         return;
     };
-    let event_name = match env_msg.ty.as_str() {
+    let ty = value.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    let event_name = match ty {
         "hello" => "cloud://relay-hello",
         "event" => "cloud://relay-event",
         "presence" => "cloud://relay-presence",
         "error" => "cloud://relay-error",
         "cmd" => "cloud://relay-cmd",
         _ => {
-            tracing::debug!("[relay] unrecognised type: {}", env_msg.ty);
+            tracing::debug!("[relay] unrecognised type: {}", ty);
             return;
         }
     };

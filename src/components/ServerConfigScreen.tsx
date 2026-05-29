@@ -57,6 +57,10 @@ export function ServerConfigScreen({ server, activeOrgId, onBack }: Props) {
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const awaitingId = useRef<string | null>(null);
+  // The save's "no response" fallback timer. Tracked so we can clear it when
+  // the result arrives or the screen unmounts (otherwise it fires late and
+  // calls setState on an unmounted component / clobbers a success toast).
+  const saveTimeoutRef = useRef<number | null>(null);
 
   const loadConfig = useCallback(async () => {
     const decrypt = () => cloudServerConfig(server.id);
@@ -119,6 +123,10 @@ export function ServerConfigScreen({ server, activeOrgId, onBack }: Props) {
       };
       if (m.kind !== 'cmd_result' || m.request_id !== awaitingId.current) return;
       awaitingId.current = null;
+      if (saveTimeoutRef.current !== null) {
+        window.clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
+      }
       setSaving(false);
       const ok = m.ok === true || m.success === true;
       setToast(
@@ -129,7 +137,13 @@ export function ServerConfigScreen({ server, activeOrgId, onBack }: Props) {
     }).then((u) => {
       unsub = u;
     });
-    return () => unsub?.();
+    return () => {
+      unsub?.();
+      if (saveTimeoutRef.current !== null) {
+        window.clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
+      }
+    };
   }, []);
 
   async function onUnlock() {
@@ -169,8 +183,10 @@ export function ServerConfigScreen({ server, activeOrgId, onBack }: Props) {
         target: server.id,
         args: { config: edited, nodeId: phase.cfg.nodeId ?? 'local' },
       });
-      // Fallback if the owner is offline and no cmd_result ever lands.
-      window.setTimeout(() => {
+      // Fallback if the owner is offline and no cmd_result ever lands. Tracked
+      // in a ref so the cmd_result handler / unmount can cancel it.
+      saveTimeoutRef.current = window.setTimeout(() => {
+        saveTimeoutRef.current = null;
         if (awaitingId.current === requestId) {
           awaitingId.current = null;
           setSaving(false);

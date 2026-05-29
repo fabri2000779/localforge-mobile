@@ -79,24 +79,40 @@ pub async fn cloud_orgs_accept_invite(
     };
     let res = orgs::accept_invite_full(&token, &bearer).await?;
     if let (Some(secret_b64), Some(wrapped)) = (secret, res.wrapped_dek.as_ref()) {
-        if let Ok(s) = base64::engine::general_purpose::STANDARD.decode(secret_b64.trim()) {
-            if s.len() == 32 {
+        // Log every handoff failure instead of swallowing it — a corrupt/missing
+        // secret silently degrades to "waiting for the owner to grant access",
+        // and without a log there's no way to tell that apart from a genuine
+        // wait. (Access still works via the owner's background grant.)
+        match base64::engine::general_purpose::STANDARD.decode(secret_b64.trim()) {
+            Ok(s) if s.len() == 32 => {
                 let mut sk = [0u8; 32];
                 sk.copy_from_slice(&s);
-                if let Ok(dek) = localforge_cloud_client::vault::unwrap_dek(&sk, wrapped) {
-                    crate::vault::adopt_org_dek(&app, &res.org_id, &dek);
-                    // Durable cross-device access without waiting for the owner:
-                    // self-seal a grant to our own pubkey. We need our user id —
-                    // fetch /me rather than depend on the accept response field
-                    // (which only newer cloud-client builds expose). Best-effort;
-                    // self_seal_grant skips silently if we have no keypair yet.
-                    if let Ok(me) = localforge_cloud_client::auth::fetch_me(&bearer).await {
-                        let _ =
-                            crate::vault::self_seal_grant(&app, &res.org_id, &me.id, &dek, &bearer)
-                                .await;
+                match localforge_cloud_client::vault::unwrap_dek(&sk, wrapped) {
+                    Ok(dek) => {
+                        crate::vault::adopt_org_dek(&app, &res.org_id, &dek);
+                        // Durable cross-device access without waiting for the
+                        // owner: self-seal a grant to our own pubkey. We need
+                        // our user id — fetch /me rather than depend on the
+                        // accept response field (only newer cloud-client builds
+                        // expose it). Best-effort; skips if we have no keypair.
+                        if let Ok(me) = localforge_cloud_client::auth::fetch_me(&bearer).await {
+                            let _ = crate::vault::self_seal_grant(
+                                &app, &res.org_id, &me.id, &dek, &bearer,
+                            )
+                            .await;
+                        }
                     }
+                    Err(e) => tracing::warn!(
+                        "[invite] handoff DEK unwrap failed ({e}); will wait for owner grant"
+                    ),
                 }
             }
+            Ok(_) => tracing::warn!(
+                "[invite] handoff secret wrong length; will wait for owner grant"
+            ),
+            Err(e) => tracing::warn!(
+                "[invite] handoff secret not base64 ({e}); will wait for owner grant"
+            ),
         }
     }
     Ok(res.org_id)
