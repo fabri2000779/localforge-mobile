@@ -311,6 +311,82 @@ export function subscribeRelayEvent(
 }
 
 // ---------------------------------------------------------------------------
+// Backups + schedules (driven over the relay; the host holds the S3 creds —
+// the secret never reaches the phone or the cloud). Wire shapes mirror the
+// Rust `BackupEntry` / `Schedule` / `ScheduleAction` (all camelCase).
+// ---------------------------------------------------------------------------
+
+export interface BackupEntry {
+  key: string;
+  size: number;
+  createdAt: number;
+}
+
+export type ScheduleAction =
+  | { kind: 'restart' }
+  | { kind: 'command'; command: string }
+  | { kind: 'broadcast'; message: string };
+
+export interface Schedule {
+  id: string;
+  serverId: string;
+  cron: string;
+  action: ScheduleAction;
+  enabled: boolean;
+  lastRun?: number | null;
+}
+
+/**
+ * Send a relay cmd to the host and await its reply, correlated by request_id.
+ * Resolves with the matching event payload — a `snapshotKind` event (for list
+ * cmds that carry data inline) or a successful `cmd_result`. Rejects on a
+ * failed cmd_result or after `timeoutMs` (the host may be offline).
+ */
+export async function relayRequest(opts: {
+  cmd: string;
+  target: string;
+  args?: Record<string, unknown>;
+  snapshotKind?: string;
+  timeoutMs?: number;
+}): Promise<Record<string, unknown>> {
+  const requestId = crypto.randomUUID();
+  let resolveFn!: (v: Record<string, unknown>) => void;
+  let rejectFn!: (e: Error) => void;
+  const result = new Promise<Record<string, unknown>>((res, rej) => {
+    resolveFn = res;
+    rejectFn = rej;
+  });
+  const timer = setTimeout(
+    () => rejectFn(new Error('Timed out — is the host online?')),
+    opts.timeoutMs ?? 15000,
+  );
+  const unsub = await subscribeRelayEvent((msg) => {
+    if (msg.request_id !== requestId) return;
+    if (opts.snapshotKind && msg.kind === opts.snapshotKind) {
+      resolveFn(msg);
+      return;
+    }
+    if (msg.kind === 'cmd_result') {
+      if (msg.success) resolveFn(msg);
+      else rejectFn(new Error(typeof msg.error === 'string' ? msg.error : 'Command failed'));
+    }
+  });
+  try {
+    await cloudRelaySendCmd({
+      type: 'cmd',
+      cmd: opts.cmd,
+      request_id: requestId,
+      target: opts.target,
+      args: opts.args ?? {},
+    });
+    return await result;
+  } finally {
+    clearTimeout(timer);
+    unsub();
+  }
+}
+
+// ---------------------------------------------------------------------------
 // OAuth — fire-and-forget. The actual token arrives via the
 // `cloud://signed-in` event AFTER the user completes the browser flow;
 // callers subscribe with `onSignedIn()` below before invoking start.

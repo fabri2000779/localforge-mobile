@@ -311,7 +311,10 @@ export function ServerListScreen({ me, onlineNodeIds, desktopOnline, embedded, o
                   server={s}
                   status={statuses.get(s.id)}
                   machine={machineName(machineOf(s))}
-                  onOpen={() => onOpenServer(s, statuses.get(s.id))}
+                  // Stamp the discovered node id so the detail screen routes
+                  // relay cmds (start/backup/schedule/…) to the right host even
+                  // when the synced config can't be decrypted (sync key locked).
+                  onOpen={() => onOpenServer({ ...s, nodeId: machineOf(s) }, statuses.get(s.id))}
                   onAction={(a) => sendAction(s, a)}
                 />
               ))}

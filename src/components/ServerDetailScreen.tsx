@@ -40,6 +40,8 @@ import {
   type ServerSummary,
 } from '../lib/cloud';
 import { type ServerStatus } from './ServerListScreen';
+import { ServerBackupsSection } from './ServerBackupsSection';
+import { ServerSchedulesSection } from './ServerSchedulesSection';
 
 interface Props {
   server: ServerSummary;
@@ -580,6 +582,9 @@ export function ServerDetailScreen({ server, initialStatus, desktopOnline, onlin
           </button>
         </form>
       </section>
+
+      <ServerBackupsSection serverId={server.id} nodeId={nodeId} online={executorOnline} />
+      <ServerSchedulesSection serverId={server.id} nodeId={nodeId} online={executorOnline} />
 
       <button type="button" className="cfg-btn detail-cfg" onClick={onOpenConfig}>
         <SlidersHorizontal size={15} />

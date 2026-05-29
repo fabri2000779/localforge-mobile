@@ -68,8 +68,15 @@ pub struct ServerConfigView {
     #[serde(alias = "memory_mb")]
     pub memory_mb: u32,
     pub config: HashMap<String, String>,
-    #[serde(default, alias = "node_id")]
+    // Default to "local" to match the desktop's decoder (it uses the same
+    // default), so a pre-multinode blob without a nodeId resolves identically on
+    // both clients instead of drifting (None here vs "local" there).
+    #[serde(default = "default_node_id", alias = "node_id")]
     pub node_id: Option<String>,
+}
+
+fn default_node_id() -> Option<String> {
+    Some("local".to_string())
 }
 
 /// Decrypt one synced server's config blob for the viewer/editor.

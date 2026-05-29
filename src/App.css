@@ -1317,3 +1317,58 @@ input, textarea {
   color: #fca5a5;
   border: 1px solid rgba(239, 68, 68, 0.3);
 }
+
+/* ── Server ops sections (backups + schedules) ───────────────────── */
+.ops-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  padding: 10px 12px;
+  margin-top: 6px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  color: #f1f5f9;
+  font-size: 13.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.ops-btn:disabled { opacity: 0.5; }
+.ops-muted { font-size: 12.5px; color: #94a3b8; margin: 10px 2px 2px; }
+.ops-error { font-size: 12.5px; color: #fca5a5; margin: 8px 2px 0; word-break: break-word; }
+.ops-list { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.ops-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.035);
+}
+.ops-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.ops-row-title { font-size: 13px; font-weight: 500; color: #e2e8f0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ops-row-sub { font-size: 11.5px; color: #94a3b8; }
+.ops-danger { color: #fca5a5; }
+.ops-field {
+  width: 100%;
+  margin-top: 8px;
+  padding: 9px 11px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(0, 0, 0, 0.22);
+  color: #f1f5f9;
+  font-size: 13px;
+}
+.ops-toggle {
+  margin-left: auto;
+  font-size: 11px;
+  color: #94a3b8;
+  background: none;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  cursor: pointer;
+  padding: 3px 9px;
+}
+.ops-toggle--on { color: #6ee7b7; border-color: rgba(16, 185, 129, 0.4); }
