@@ -132,6 +132,7 @@ export function LoginScreen({ onSignedIn }: Props) {
         <div className="auth-mark">
           <img src="/favicon.svg" width={40} height={40} alt="" />
         </div>
+        <div className="auth-wordmark">Local<span>Forge</span></div>
         <h1>{mode === 'signup' ? 'Create your account' : mode === 'forgot' ? 'Reset password' : 'Sign in'}</h1>
         <p>
           {mode === 'signup'

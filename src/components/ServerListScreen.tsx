@@ -277,7 +277,18 @@ export function ServerListScreen({ me, onlineNodeIds, desktopOnline, embedded, o
         )}
         <div className="list-title">
           <h1>Servers</h1>
+          {state.kind === 'ready' && (
+            <div className="list-sub">
+              {machines.length} node{machines.length === 1 ? '' : 's'} · {allServers.length} server{allServers.length === 1 ? '' : 's'}
+            </div>
+          )}
         </div>
+        {isPaid && (
+          <span className={`relay-badge ${desktopOnline || onlineNodeIds.size > 0 ? 'relay-badge--live' : ''}`}>
+            <span className="status-dot" aria-hidden />
+            {desktopOnline || onlineNodeIds.size > 0 ? 'Live' : 'Offline'}
+          </span>
+        )}
         {state.kind === 'ready' && (
           <button type="button" className="icon-btn" onClick={() => load(true)} disabled={refreshing} aria-label="Refresh">
             <RefreshCw size={16} style={refreshing ? { animation: 'spin 0.8s linear infinite' } : undefined} />

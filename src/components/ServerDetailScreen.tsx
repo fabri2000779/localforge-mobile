@@ -24,13 +24,15 @@
  */
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
-  Activity,
   Archive,
   ArrowLeft,
   Clock,
+  Cloud,
+  Loader2,
   Play,
   RefreshCcw,
   Send,
+  Server,
   SlidersHorizontal,
   Square,
   Terminal,
@@ -441,20 +443,34 @@ export function ServerDetailScreen({ server, initialStatus, desktopOnline, onlin
     : status === 'stopped' || status === 'crashed'
       ? 'stopped'
       : 'live';
+  const isRunning = status === 'running' || status === 'starting';
+  // Best-effort host label: a node we can see in the relay's agent set is a
+  // remote agent; otherwise treat it as the owner's desktop ("This machine").
+  const isAgent = nodeId != null && onlineNodeIds.has(nodeId);
 
   return (
     <div className="detail-screen">
-      <header className="detail-header">
-        <button
-          type="button"
-          className="icon-btn"
-          onClick={onBack}
-          aria-label="Back"
-        >
+      <header className="detail-topbar">
+        <button type="button" className="icon-btn" onClick={onBack} aria-label="Back">
           <ArrowLeft size={16} />
         </button>
-        <div className="detail-title">
-          <h1>{server.name}</h1>
+        <div className="detail-topbar-title">{server.name}</div>
+        <button type="button" className="icon-btn" onClick={onOpenConfig} aria-label="Edit configuration">
+          <SlidersHorizontal size={16} />
+        </button>
+      </header>
+
+      {/* Hero card — monogram + name + host + status */}
+      <section className="detail-card">
+        <div className="detail-mono" style={{ background: monogramGradient(server.name) }}>
+          {serverInitials(server.name)}
+        </div>
+        <div className="detail-card-id">
+          <div className="detail-card-name">{server.name}</div>
+          <div className="detail-card-meta">
+            {isAgent ? <Cloud size={12} /> : <Server size={12} />}
+            {isAgent ? 'Remote agent' : 'This machine'}
+          </div>
         </div>
         {status && (
           <span className={`status-badge status-badge--${detailVariant(status)}`}>
@@ -462,34 +478,45 @@ export function ServerDetailScreen({ server, initialStatus, desktopOnline, onlin
             {detailLabel(status)}
           </span>
         )}
-      </header>
+      </section>
 
-      <div className="action-row">
-        <ActionButton
-          label="Start"
-          icon={<Play size={16} />}
-          tone="positive"
-          disabled={!!pending || !executorOnline}
-          loading={pending === 'start'}
-          onClick={() => fire('start')}
-        />
-        <ActionButton
-          label="Stop"
-          icon={<Square size={16} />}
-          tone="danger"
-          disabled={!!pending || !executorOnline}
-          loading={pending === 'stop'}
-          onClick={() => fire('stop')}
-        />
-        <ActionButton
-          label="Restart"
-          icon={<RefreshCcw size={16} />}
-          tone="neutral"
-          disabled={!!pending || !executorOnline}
-          loading={pending === 'restart'}
-          onClick={() => fire('restart')}
-        />
+      {/* Actions — Start full-width when down; Stop + Restart when up */}
+      <div className="detail-actions">
+        {isRunning ? (
+          <>
+            <button type="button" className="act-btn act-btn--secondary"
+              disabled={!!pending || !executorOnline} onClick={() => fire('stop')}>
+              {pending === 'stop' ? <Loader2 size={15} className="spin" /> : <Square size={15} />} Stop
+            </button>
+            <button type="button" className="act-btn act-btn--secondary"
+              disabled={!!pending || !executorOnline} onClick={() => fire('restart')}>
+              {pending === 'restart' ? <Loader2 size={15} className="spin" /> : <RefreshCcw size={15} />} Restart
+            </button>
+          </>
+        ) : (
+          <button type="button" className="act-btn act-btn--start"
+            disabled={!!pending || !executorOnline} onClick={() => fire('start')}>
+            {pending === 'start' ? <Loader2 size={15} className="spin" /> : <Play size={15} />} Start server
+          </button>
+        )}
       </div>
+
+      {/* Live resource stats — always shown (— when not running) */}
+      <div className="detail-stat3">
+        <div className="dstat">
+          <div className="dstat-v" style={{ color: 'var(--accent)' }}>{stats ? `${Math.round(stats.cpu_percent)}%` : '—'}</div>
+          <div className="dstat-l">CPU</div>
+        </div>
+        <div className="dstat">
+          <div className="dstat-v" style={{ color: 'var(--steel)' }}>{stats ? `${Math.round(stats.memory_percent)}%` : '—'}</div>
+          <div className="dstat-l">RAM</div>
+        </div>
+        <div className="dstat">
+          <div className="dstat-v" style={{ color: 'var(--green, #34d399)' }}>{stats ? fmtMb(stats.memory_usage_mb) : '—'}</div>
+          <div className="dstat-l">Memory</div>
+        </div>
+      </div>
+
       {/* Section tab bar */}
       <div className="detail-tabs" role="tablist">
         <button role="tab" className={"detail-tab" + (activeTab === "console" ? " detail-tab--active" : "")} onClick={() => setActiveTab("console")} aria-selected={activeTab === "console"}>
@@ -515,32 +542,6 @@ export function ServerDetailScreen({ server, initialStatus, desktopOnline, onlin
           Neither your LocalForge desktop nor this server's agent is connected —
           bring one online to start, stop or restart it.
         </p>
-      )}
-
-      {activeTab === 'console' && consoleMode === 'live' && (
-        <section className="card stats-card">
-          <div className="console-header">
-            <Activity size={14} />
-            <span>Usage</span>
-          </div>
-          {stats ? (
-            <div className="stats-grid">
-              <StatBar
-                label="CPU"
-                pct={stats.cpu_percent}
-                detail={`${stats.cpu_percent.toFixed(1)}%`}
-              />
-              <StatBar
-                label="Memory"
-                pct={stats.memory_percent}
-                detail={`${fmtMb(stats.memory_usage_mb)} / ${fmtMb(stats.memory_limit_mb)}`}
-                tone="steel"
-              />
-            </div>
-          ) : (
-            <div className="stats-loading">Reading usage…</div>
-          )}
-        </section>
       )}
 
       {activeTab === 'console' && (
@@ -617,11 +618,6 @@ export function ServerDetailScreen({ server, initialStatus, desktopOnline, onlin
         </section>
       )}
 
-      <button type="button" className="cfg-btn detail-cfg" onClick={onOpenConfig}>
-        <SlidersHorizontal size={15} />
-        Edit configuration
-      </button>
-
       <div className="detail-meta">
         <span className="mono">{server.id}</span>
         <span>· synced {new Date(server.updatedAt).toLocaleDateString()}</span>
@@ -638,66 +634,27 @@ export function ServerDetailScreen({ server, initialStatus, desktopOnline, onlin
 
 // ---------------------------------------------------------------------------
 
-interface ActionButtonProps {
-  label: string;
-  icon: React.ReactNode;
-  tone: 'positive' | 'danger' | 'neutral';
-  disabled?: boolean;
-  loading?: boolean;
-  onClick: () => void;
+// Forged monogram tile for the detail hero — mirrors the server-list tiles
+// (a 2-letter glyph on a deterministic on-brand gradient). The initials carry
+// the identity, so it stays legible regardless of colour vision.
+const MONOGRAM_GRADIENTS = [
+  'linear-gradient(135deg, #fb923c, #c2410c)', // ember
+  'linear-gradient(135deg, #38bdf8, #0369a1)', // steel
+  'linear-gradient(135deg, #34d399, #047857)', // emerald
+  'linear-gradient(135deg, #a78bfa, #6d28d9)', // violet
+  'linear-gradient(135deg, #f472b6, #be185d)', // rose
+  'linear-gradient(135deg, #facc15, #b45309)', // amber
+];
+function serverInitials(name: string): string {
+  const words = name.trim().split(/[\s_-]+/).filter(Boolean);
+  if (words.length === 0) return '··';
+  if (words.length === 1) return words[0]!.slice(0, 2);
+  return words[0]![0]! + words[1]![0]!;
 }
-
-function ActionButton({
-  label,
-  icon,
-  tone,
-  disabled,
-  loading,
-  onClick,
-}: ActionButtonProps) {
-  return (
-    <button
-      type="button"
-      className={`action-btn action-btn--${tone}`}
-      onClick={onClick}
-      disabled={disabled}
-      aria-busy={loading || undefined}
-    >
-      {loading ? <span className="action-spin">…</span> : icon}
-      <span>{label}</span>
-    </button>
-  );
-}
-
-// ---------------------------------------------------------------------------
-
-function StatBar({
-  label,
-  pct,
-  detail,
-  tone,
-}: {
-  label: string;
-  pct: number;
-  detail: string;
-  /** 'steel' tints the fill blue (Memory), default ember (CPU). */
-  tone?: 'steel';
-}) {
-  const clamped = Math.max(0, Math.min(100, Number.isFinite(pct) ? pct : 0));
-  return (
-    <div className="stat-row">
-      <div className="stat-row-top">
-        <span className="stat-label">{label}</span>
-        <span className="stat-detail">{detail}</span>
-      </div>
-      <div className="stat-bar">
-        <div
-          className={`stat-bar-fill${tone === 'steel' ? ' stat-bar-fill--steel' : ''}`}
-          style={{ width: `${clamped}%` }}
-        />
-      </div>
-    </div>
-  );
+function monogramGradient(name: string): string {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  return MONOGRAM_GRADIENTS[h % MONOGRAM_GRADIENTS.length]!;
 }
 
 function fmtMb(mb: number): string {
