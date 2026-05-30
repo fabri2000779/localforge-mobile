@@ -4,11 +4,16 @@
  */
 import { useEffect, useState } from 'react';
 import {
+  Archive,
   Cloud,
   CloudOff,
   LogOut,
   RefreshCw,
   Check,
+  ChevronDown,
+  ChevronUp,
+  Plus,
+  Trash2,
   Users,
   KeyRound,
   Lock,
@@ -21,10 +26,15 @@ import {
   cloudSyncKeySetup,
   cloudSyncKeyStatus,
   cloudSyncKeyUnlock,
+  cloudBackupTargetsList,
+  cloudBackupTargetAdd,
+  cloudBackupTargetDelete,
   isCloudError,
   type Me,
   type OrgSummary,
   type SyncKeyStatus,
+  type BackupTargetView,
+  type BackupTargetInput,
 } from '../lib/cloud';
 
 export function AccountScreen({
@@ -147,6 +157,9 @@ export function AccountScreen({
       {needsSync && <SyncKeySection />}
 
       <JoinByLinkSection onJoinedOrg={onJoinedOrg} />
+
+      {/* Backup storage — only meaningful for paid users who can sync targets */}
+      {plan !== 'free' && <BackupStorageSection />}
 
       <button
         type="button"
@@ -359,6 +372,164 @@ function JoinByLinkSection({ onJoinedOrg }: { onJoinedOrg: (orgId: string) => vo
           Cancel
         </button>
       </div>
+    </section>
+  );
+}
+
+// ── Backup Storage section ───────────────────────────────────────────────────
+
+const EMPTY_CREDS: BackupTargetInput = {
+  endpoint: '', region: 'us-east-1', bucket: '', accessKey: '', secretKey: '', pathStyle: false,
+};
+
+/**
+ * Org-level backup storage management in the Account tab. Admin users can add /
+ * remove named S3-compatible targets. The credentials are DEK-encrypted before
+ * they leave the device — the cloud only stores ciphertext.
+ */
+function BackupStorageSection() {
+  const [targets, setTargets] = useState<BackupTargetView[] | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [newName, setNewName] = useState('');
+  const [creds, setCreds] = useState<BackupTargetInput>(EMPTY_CREDS);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    cloudBackupTargetsList()
+      .then(setTargets)
+      .catch(() => setTargets([]));
+  }, []);
+
+  const addTarget = async () => {
+    if (!newName.trim() || !creds.bucket.trim() || !creds.accessKey.trim() || !creds.secretKey.trim()) return;
+    setBusy('add'); setErr(null);
+    try {
+      const id = crypto.randomUUID();
+      const t = await cloudBackupTargetAdd(id, newName.trim(), creds);
+      setTargets((prev) => [...(prev ?? []), t]);
+      setAdding(false);
+      setNewName('');
+      setCreds(EMPTY_CREDS);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const removeTarget = async (id: string, name: string) => {
+    if (!window.confirm(`Remove "${name}"? Existing backups in the bucket are NOT deleted.`)) return;
+    setBusy(`del:${id}`);
+    try {
+      await cloudBackupTargetDelete(id);
+      setTargets((prev) => (prev ?? []).filter((t) => t.id !== id));
+      if (expanded === id) setExpanded(null);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  if (targets === null) return null; // still loading — don't flash a section
+
+  return (
+    <section className="card">
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div className="lf-tile"><Archive size={15} /></div>
+          <div>
+            <div className="nav-card-title" style={{ fontSize: 14 }}>Backup Storage</div>
+            <div className="nav-card-sub">
+              {targets.length === 0 ? 'No storage configured' : `${targets.length} target${targets.length !== 1 ? 's' : ''}`}
+            </div>
+          </div>
+        </div>
+        {!adding && (
+          <button
+            type="button"
+            className="ghost-btn"
+            style={{ padding: '5px 10px', fontSize: 12, gap: 5 }}
+            onClick={() => setAdding(true)}
+          >
+            <Plus size={13} /> Add
+          </button>
+        )}
+      </div>
+
+      {err && <p className="ops-error">{err}</p>}
+
+      {/* Target list */}
+      {targets.map((t) => (
+        <div key={t.id} style={{ borderTop: '1px solid var(--border)', paddingTop: 10, marginTop: 8 }}>
+          <div
+            style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}
+            onClick={() => setExpanded(expanded === t.id ? null : t.id)}
+          >
+            <div className="ops-row-main">
+              <span className="ops-row-title">{t.name}</span>
+              <span className="ops-row-sub">{t.bucket}{t.endpoint ? ` · ${t.endpoint}` : ''}</span>
+            </div>
+            <button
+              type="button"
+              className="icon-btn ops-danger"
+              disabled={!!busy}
+              onClick={(e) => { e.stopPropagation(); void removeTarget(t.id, t.name); }}
+              aria-label="Remove"
+            >
+              {busy === `del:${t.id}` ? <Loader2 size={13} className="spin" /> : <Trash2 size={13} />}
+            </button>
+            {expanded === t.id ? <ChevronUp size={13} style={{ color: 'var(--text-muted)', flexShrink: 0 }} /> : <ChevronDown size={13} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />}
+          </div>
+          {expanded === t.id && (
+            <div style={{ marginTop: 8, paddingLeft: 4, fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.7 }}>
+              <div>Bucket: <span style={{ color: 'var(--text-main)', fontFamily: 'monospace' }}>{t.bucket}</span></div>
+              <div>Endpoint: <span style={{ color: 'var(--text-main)', fontFamily: 'monospace' }}>{t.endpoint || 'AWS S3 default'}</span></div>
+              <div>Region: <span style={{ color: 'var(--text-main)', fontFamily: 'monospace' }}>{t.region}</span></div>
+              <div>Access key: <span style={{ color: 'var(--text-main)', fontFamily: 'monospace' }}>{t.accessKey}</span></div>
+              <div>Secret key: <span style={{ color: 'var(--text-dim)' }}>•••••••• (encrypted)</span></div>
+            </div>
+          )}
+        </div>
+      ))}
+
+      {/* Add form */}
+      {adding && (
+        <div style={{ borderTop: '1px solid var(--border)', marginTop: 10, paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <p className="lf-sectlabel" style={{ marginBottom: 4 }}>New backup storage</p>
+          {[
+            { placeholder: 'Name (e.g. R2 Production)', value: newName, onChange: (v: string) => setNewName(v) },
+          ].map((f, i) => (
+            <input key={i} className="ops-field" placeholder={f.placeholder} value={f.value} onChange={(e) => f.onChange(e.target.value)} />
+          ))}
+          <input className="ops-field" placeholder="Bucket" value={creds.bucket} onChange={(e) => setCreds({ ...creds, bucket: e.target.value })} />
+          <input className="ops-field" placeholder="Endpoint URL (empty = AWS S3)" value={creds.endpoint} onChange={(e) => setCreds({ ...creds, endpoint: e.target.value })} />
+          <input className="ops-field" placeholder="Region (e.g. auto, us-east-1)" value={creds.region} onChange={(e) => setCreds({ ...creds, region: e.target.value })} />
+          <input className="ops-field" placeholder="Access key ID" value={creds.accessKey} onChange={(e) => setCreds({ ...creds, accessKey: e.target.value })} autoCapitalize="off" />
+          <input className="ops-field" placeholder="Secret access key" value={creds.secretKey} onChange={(e) => setCreds({ ...creds, secretKey: e.target.value })} autoCapitalize="off" type="password" />
+          <label style={{ fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <input type="checkbox" checked={creds.pathStyle} onChange={(e) => setCreds({ ...creds, pathStyle: e.target.checked })} />
+            Path-style (MinIO / self-hosted)
+          </label>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              type="button"
+              className="ops-btn"
+              style={{ marginTop: 0 }}
+              disabled={busy === 'add' || !newName.trim() || !creds.bucket.trim() || !creds.accessKey.trim() || !creds.secretKey.trim()}
+              onClick={addTarget}
+            >
+              {busy === 'add' ? <Loader2 size={14} className="spin" /> : <Archive size={14} />}
+              Save storage
+            </button>
+            <button type="button" className="ops-btn" style={{ marginTop: 0 }} onClick={() => { setAdding(false); setCreds(EMPTY_CREDS); setNewName(''); }} disabled={busy === 'add'}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
