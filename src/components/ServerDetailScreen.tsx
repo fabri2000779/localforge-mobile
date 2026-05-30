@@ -218,6 +218,10 @@ export function ServerDetailScreen({ server, initialStatus, desktopOnline, onlin
   useEffect(() => {
     let unsub: UnlistenFn | undefined;
     let cancelled = false;
+    // Only send `detach` on cleanup if we actually sent `attach` — otherwise a
+    // fast back-navigation (before the async nodeId resolve sends attach) would
+    // fire a stray detach with an unresolved nodeId.
+    let attached = false;
 
     listen<LogsSnapshotEvent | RelayConsoleEvent | StateChangedEvent | StatsSnapshotEvent>(
       'cloud://relay-event',
@@ -297,6 +301,7 @@ export function ServerDetailScreen({ server, initialStatus, desktopOnline, onlin
         target: server.id,
         args: relayArgs({ lines: 200 }),
       });
+      attached = true;
       void cloudRelaySendCmd({
         type: 'cmd',
         cmd: 'server.attach',
@@ -309,13 +314,15 @@ export function ServerDetailScreen({ server, initialStatus, desktopOnline, onlin
     return () => {
       cancelled = true;
       unsub?.();
-      void cloudRelaySendCmd({
-        type: 'cmd',
-        cmd: 'server.detach',
-        request_id: crypto.randomUUID(),
-        target: server.id,
-        args: relayArgs(),
-      });
+      if (attached) {
+        void cloudRelaySendCmd({
+          type: 'cmd',
+          cmd: 'server.detach',
+          request_id: crypto.randomUUID(),
+          target: server.id,
+          args: relayArgs(),
+        });
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [server.id]);
@@ -527,6 +534,7 @@ export function ServerDetailScreen({ server, initialStatus, desktopOnline, onlin
                 label="Memory"
                 pct={stats.memory_percent}
                 detail={`${fmtMb(stats.memory_usage_mb)} / ${fmtMb(stats.memory_limit_mb)}`}
+                tone="steel"
               />
             </div>
           ) : (
@@ -667,10 +675,13 @@ function StatBar({
   label,
   pct,
   detail,
+  tone,
 }: {
   label: string;
   pct: number;
   detail: string;
+  /** 'steel' tints the fill blue (Memory), default ember (CPU). */
+  tone?: 'steel';
 }) {
   const clamped = Math.max(0, Math.min(100, Number.isFinite(pct) ? pct : 0));
   return (
@@ -680,7 +691,10 @@ function StatBar({
         <span className="stat-detail">{detail}</span>
       </div>
       <div className="stat-bar">
-        <div className="stat-bar-fill" style={{ width: `${clamped}%` }} />
+        <div
+          className={`stat-bar-fill${tone === 'steel' ? ' stat-bar-fill--steel' : ''}`}
+          style={{ width: `${clamped}%` }}
+        />
       </div>
     </div>
   );

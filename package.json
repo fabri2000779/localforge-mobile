@@ -1,7 +1,7 @@
 {
   "name": "localforge-mobile",
   "private": true,
-  "version": "0.3.6",
+  "version": "0.3.7",
   "description": "LocalForge mobile companion app — iOS + Android",
   "author": "Fabrizio",
   "license": "UNLICENSED",
@@ -19,6 +19,8 @@
     "tauri:ios:build": "tauri ios build"
   },
   "dependencies": {
+    "@fontsource/jetbrains-mono": "^5.2.8",
+    "@fontsource/space-grotesk": "^5.2.10",
     "@tauri-apps/api": "^2.11.0",
     "lucide-react": "^1.17.0",
     "react": "^19.2.6",

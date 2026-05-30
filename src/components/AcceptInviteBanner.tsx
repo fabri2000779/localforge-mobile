@@ -98,7 +98,7 @@ const wrap: CSSProperties = {
   borderBottom: '1px solid var(--border, #232c3a)',
   boxShadow: '0 6px 20px rgba(0,0,0,.35)',
 };
-const icon: CSSProperties = { color: 'var(--accent, #a78bfa)', display: 'flex' };
+const icon: CSSProperties = { color: 'var(--accent, #f97316)', display: 'flex' };
 const acceptBtn: CSSProperties = {
   display: 'flex',
   alignItems: 'center',
@@ -106,8 +106,10 @@ const acceptBtn: CSSProperties = {
   padding: '8px 14px',
   borderRadius: 10,
   border: 'none',
-  background: 'var(--accent, #7c5cff)',
-  color: '#fff',
+  // Forged-ember primary CTA — dark text on hot metal, matching the rest of
+  // the app's primary buttons.
+  background: 'linear-gradient(180deg, #fb923c, var(--accent, #f97316))',
+  color: '#1c0f03',
   fontWeight: 600,
   fontSize: 13,
   whiteSpace: 'nowrap',

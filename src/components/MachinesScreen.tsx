@@ -130,7 +130,7 @@ function MachineGroup({
           <section className="card" key={m.id}>
             <div className="card-row" style={{ alignItems: 'center' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
-                <div className={`lf-tile ${desktop ? '' : 'violet'}`}>
+                <div className={`lf-tile ${desktop ? '' : 'steel'}`}>
                   {desktop ? <Server size={18} /> : <Cloud size={18} />}
                 </div>
                 <div style={{ minWidth: 0 }}>

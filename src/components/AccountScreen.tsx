@@ -395,12 +395,26 @@ function BackupStorageSection() {
   const [creds, setCreds] = useState<BackupTargetInput>(EMPTY_CREDS);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // Distinguishes "load failed" (locked key / offline) from a genuinely empty
+  // list, so we don't show "No storage configured" when targets exist but
+  // couldn't be fetched.
+  const [loadErr, setLoadErr] = useState<string | null>(null);
+  // Inline delete confirm (window.confirm is broken in Tauri mobile WebViews).
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
 
-  useEffect(() => {
+  const load = () => {
+    setLoadErr(null);
     cloudBackupTargetsList()
-      .then(setTargets)
-      .catch(() => setTargets([]));
-  }, []);
+      .then((list) => { setTargets(list); })
+      .catch((e) => {
+        setLoadErr(isCloudError(e) && e.code === 'locked'
+          ? 'Unlock your sync key to view backup storage.'
+          : 'Couldn’t load backup storage — check your connection.');
+        setTargets([]);
+      });
+  };
+
+  useEffect(() => { load(); }, []);
 
   const addTarget = async () => {
     if (!newName.trim() || !creds.bucket.trim() || !creds.accessKey.trim() || !creds.secretKey.trim()) return;
@@ -419,9 +433,9 @@ function BackupStorageSection() {
     }
   };
 
-  const removeTarget = async (id: string, name: string) => {
-    if (!window.confirm(`Remove "${name}"? Existing backups in the bucket are NOT deleted.`)) return;
+  const removeTarget = async (id: string) => {
     setBusy(`del:${id}`);
+    setPendingDelete(null);
     try {
       await cloudBackupTargetDelete(id);
       setTargets((prev) => (prev ?? []).filter((t) => t.id !== id));
@@ -461,6 +475,16 @@ function BackupStorageSection() {
 
       {err && <p className="ops-error">{err}</p>}
 
+      {/* Load error (locked key / offline) — distinct from genuinely empty */}
+      {loadErr && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
+          <span style={{ flex: 1, fontSize: 12.5, color: 'var(--text-muted)' }}>{loadErr}</span>
+          <button type="button" className="ghost-btn" style={{ padding: '5px 10px', fontSize: 12 }} onClick={load}>
+            <RefreshCw size={13} /> Retry
+          </button>
+        </div>
+      )}
+
       {/* Target list */}
       {targets.map((t) => (
         <div key={t.id} style={{ borderTop: '1px solid var(--border)', paddingTop: 10, marginTop: 8 }}>
@@ -476,13 +500,24 @@ function BackupStorageSection() {
               type="button"
               className="icon-btn ops-danger"
               disabled={!!busy}
-              onClick={(e) => { e.stopPropagation(); void removeTarget(t.id, t.name); }}
+              onClick={(e) => { e.stopPropagation(); setPendingDelete(t.id); }}
               aria-label="Remove"
             >
               {busy === `del:${t.id}` ? <Loader2 size={13} className="spin" /> : <Trash2 size={13} />}
             </button>
             {expanded === t.id ? <ChevronUp size={13} style={{ color: 'var(--text-muted)', flexShrink: 0 }} /> : <ChevronDown size={13} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />}
           </div>
+          {pendingDelete === t.id && (
+            <div style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center' }}>
+              <span style={{ flex: 1, fontSize: 12, color: 'var(--text-muted)' }}>
+                Remove "{t.name}"? Existing backups in the bucket are NOT deleted.
+              </span>
+              <button type="button" className="ops-btn" style={{ marginTop: 0, flex: 'none', background: 'rgba(239,68,68,0.15)', color: '#fca5a5' }}
+                onClick={() => removeTarget(t.id)} disabled={!!busy}>Remove</button>
+              <button type="button" className="ops-btn" style={{ marginTop: 0, flex: 'none' }}
+                onClick={() => setPendingDelete(null)}>Cancel</button>
+            </div>
+          )}
           {expanded === t.id && (
             <div style={{ marginTop: 8, paddingLeft: 4, fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.7 }}>
               <div>Bucket: <span style={{ color: 'var(--text-main)', fontFamily: 'monospace' }}>{t.bucket}</span></div>

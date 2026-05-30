@@ -1,17 +1,17 @@
 /**
  * Backups tab — backup OPERATIONS for a server.
  *
- * Storage management (which S3 bucket and credentials) lives in
- * Account → Backup Storage. Here the user just picks WHICH of the org's
- * configured targets to use and runs backup / restore / delete.
- *
- * If no storage is configured at all, an inline hint points to Account.
+ * Storage management lives in Account → Backup Storage. Here the user
+ * picks WHICH target to use and runs backup / restore / delete. All
+ * destructive actions use inline confirmations because window.confirm
+ * is not functional in Tauri mobile WebViews.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Archive, RotateCcw, Trash2, RefreshCw, Loader2, Settings } from 'lucide-react';
 import {
   cloudBackupTargetsList,
   relayRequest,
+  isCloudError,
   type BackupEntry,
   type BackupTargetView,
 } from '../lib/cloud';
@@ -40,6 +40,11 @@ export function ServerBackupsSection({
   const [items, setItems] = useState<BackupEntry[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // Inline confirm: holds the key of the pending destructive action.
+  // `restore:${key}` or `delete:${key}`
+  const [pendingConfirm, setPendingConfirm] = useState<string | null>(null);
+  // Distinguishes a failed targets fetch from a genuinely empty list.
+  const [targetsErr, setTargetsErr] = useState<string | null>(null);
   const firstLoad = useRef(true);
 
   const args = useCallback(
@@ -48,18 +53,21 @@ export function ServerBackupsSection({
     [nodeId, selectedId],
   );
 
-  // Load the org's target list from the cloud.
+  // Load the org's target list — no selectedId dep to avoid double-fetch.
   const loadTargets = useCallback(async () => {
+    setTargetsErr(null);
     try {
       const list = await cloudBackupTargetsList();
       setTargets(list);
-      if (!selectedId && list.length > 0) setSelectedId(list[0]!.id);
-    } catch {
+      setSelectedId((prev) => prev ?? list[0]?.id ?? null);
+    } catch (e) {
+      setTargetsErr(isCloudError(e) && e.code === 'locked'
+        ? 'Unlock your sync key (Account) to see backup storage.'
+        : 'Couldn’t load backup storage — check your connection.');
       setTargets([]);
     }
-  }, [selectedId]);
+  }, []);
 
-  // Load the backup list from the host via relay.
   const refresh = useCallback(async () => {
     if (!online || !selectedId) return;
     setBusy('list');
@@ -96,9 +104,9 @@ export function ServerBackupsSection({
   };
 
   const restore = async (key: string) => {
-    if (!window.confirm('Restore this backup? The server stops and its current data is replaced.')) return;
     setBusy(`restore:${key}`);
     setErr(null);
+    setPendingConfirm(null);
     try {
       await relayRequest({ cmd: 'server.restore_backup', target: serverId, args: args({ key }), timeoutMs: 180_000 });
     } catch (e) {
@@ -109,9 +117,9 @@ export function ServerBackupsSection({
   };
 
   const remove = async (key: string) => {
-    if (!window.confirm('Delete this backup permanently?')) return;
     setBusy(`delete:${key}`);
     setErr(null);
+    setPendingConfirm(null);
     try {
       await relayRequest({ cmd: 'server.delete_backup', target: serverId, args: args({ key }) });
       await refresh();
@@ -121,7 +129,6 @@ export function ServerBackupsSection({
     }
   };
 
-  // Still loading
   if (targets === null) {
     return (
       <section className="card" style={{ display: 'flex', alignItems: 'center', gap: 10, justifyContent: 'center', padding: 28 }}>
@@ -131,17 +138,29 @@ export function ServerBackupsSection({
     );
   }
 
-  // No storage configured — direct to Account tab
   if (targets.length === 0) {
+    // Load failed (locked key / offline) — show the reason + retry, NOT the
+    // "go configure storage" empty state (which would be wrong if targets exist).
+    if (targetsErr) {
+      return (
+        <section className="card" style={{ textAlign: 'center', padding: '24px 20px', gap: 12, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+          <Archive size={30} style={{ color: 'var(--text-dim, #475569)' }} />
+          <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0, lineHeight: 1.5 }}>{targetsErr}</p>
+          <button type="button" className="ops-btn" style={{ marginTop: 0, width: 'auto' }} onClick={() => void loadTargets()}>
+            <RefreshCw size={14} /> Retry
+          </button>
+        </section>
+      );
+    }
     return (
       <section className="card" style={{ textAlign: 'center', padding: '28px 20px', gap: 12, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
         <Archive size={32} style={{ color: 'var(--text-dim, #475569)' }} />
         <div>
-          <p style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-main)', margin: 0 }}>
-            No backup storage configured
-          </p>
+          <p style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-main)', margin: 0 }}>No backup storage configured</p>
           <p style={{ fontSize: 12.5, color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.5 }}>
-            Add an S3-compatible bucket in <strong style={{ color: 'var(--text-main)' }}>Account → Backup Storage</strong> to start backing up this server.
+            Add an S3-compatible bucket in{' '}
+            <strong style={{ color: 'var(--text-main)' }}>Account → Backup Storage</strong>
+            {' '}to start backing up this server.
           </p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-muted)' }}>
@@ -155,41 +174,28 @@ export function ServerBackupsSection({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      {/* Storage selector + back up now */}
       <section className="card">
         <div className="console-header">
           <Archive size={14} />
           <span>Backup storage</span>
-          <button
-            type="button"
-            className="icon-btn"
-            style={{ marginLeft: 'auto' }}
-            onClick={() => void refresh()}
-            disabled={!online || !!busy}
-            aria-label="Refresh backups"
-          >
+          <button type="button" className="icon-btn" style={{ marginLeft: 'auto' }}
+            onClick={() => void refresh()} disabled={!online || !!busy} aria-label="Refresh">
             <RefreshCw size={14} className={busy === 'list' ? 'spin' : ''} />
           </button>
         </div>
 
-        {/* Target selector — only when multiple exist */}
         {targets.length > 1 && (
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6, marginBottom: 10 }}>
             {targets.map((t) => (
-              <button
-                key={t.id}
-                type="button"
+              <button key={t.id} type="button"
                 className={`detail-tab${selectedId === t.id ? ' detail-tab--active' : ''}`}
-                style={{ flex: 'none' }}
-                onClick={() => setSelectedId(t.id)}
-              >
+                style={{ flex: 'none' }} onClick={() => setSelectedId(t.id)}>
                 {t.name}
               </button>
             ))}
           </div>
         )}
 
-        {/* Selected target summary */}
         {selected && (
           <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '6px 0 10px' }}>
             {targets.length === 1 && <strong style={{ color: 'var(--text-main)' }}>{selected.name} · </strong>}
@@ -208,14 +214,11 @@ export function ServerBackupsSection({
         {err && <p className="ops-error">{err}</p>}
       </section>
 
-      {/* Backup list */}
       {selected && online && (
         <section className="card">
           <div className="console-header" style={{ marginBottom: 8 }}>
             <Archive size={14} />
-            <span>
-              Backups{targets.length > 1 ? ` in ${selected.name}` : ''}
-            </span>
+            <span>Backups{targets.length > 1 ? ` in ${selected.name}` : ''}</span>
           </div>
           {items === null ? (
             <p className="ops-muted">Loading…</p>
@@ -224,19 +227,46 @@ export function ServerBackupsSection({
           ) : (
             <ul className="ops-list">
               {items.map((b) => (
-                <li key={b.key} className="ops-row">
-                  <div className="ops-row-main">
-                    <span className="ops-row-title">{backupName(b.key)}</span>
-                    <span className="ops-row-sub">
-                      {fmtBytes(b.size)} · {new Date(b.createdAt).toLocaleString()}
-                    </span>
+                <li key={b.key} className="ops-row" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div className="ops-row-main">
+                      <span className="ops-row-title">{backupName(b.key)}</span>
+                      <span className="ops-row-sub">
+                        {fmtBytes(b.size)} · {new Date(b.createdAt).toLocaleString()}
+                      </span>
+                    </div>
+                    <button type="button" className="icon-btn" onClick={() => setPendingConfirm(`restore:${b.key}`)}
+                      disabled={!!busy} aria-label="Restore">
+                      {busy === `restore:${b.key}` ? <Loader2 size={13} className="spin" /> : <RotateCcw size={13} />}
+                    </button>
+                    <button type="button" className="icon-btn ops-danger" onClick={() => setPendingConfirm(`delete:${b.key}`)}
+                      disabled={!!busy} aria-label="Delete">
+                      {busy === `delete:${b.key}` ? <Loader2 size={13} className="spin" /> : <Trash2 size={13} />}
+                    </button>
                   </div>
-                  <button type="button" className="icon-btn" onClick={() => restore(b.key)} disabled={!!busy} aria-label="Restore">
-                    {busy === `restore:${b.key}` ? <Loader2 size={13} className="spin" /> : <RotateCcw size={13} />}
-                  </button>
-                  <button type="button" className="icon-btn ops-danger" onClick={() => remove(b.key)} disabled={!!busy} aria-label="Delete">
-                    {busy === `delete:${b.key}` ? <Loader2 size={13} className="spin" /> : <Trash2 size={13} />}
-                  </button>
+                  {/* Inline confirm — avoids window.confirm which is broken in Tauri mobile WebViews */}
+                  {pendingConfirm === `restore:${b.key}` && (
+                    <div style={{ display: 'flex', gap: 8, marginTop: 6, paddingTop: 6, borderTop: '1px solid var(--border)' }}>
+                      <span style={{ flex: 1, fontSize: 12, color: 'var(--text-muted)' }}>
+                        Restore? Server stops and current data is replaced.
+                      </span>
+                      <button type="button" className="ops-btn" style={{ marginTop: 0, flex: 'none', background: 'rgba(239,68,68,0.15)', color: '#fca5a5' }}
+                        onClick={() => restore(b.key)} disabled={!!busy}>Restore</button>
+                      <button type="button" className="ops-btn" style={{ marginTop: 0, flex: 'none' }}
+                        onClick={() => setPendingConfirm(null)}>Cancel</button>
+                    </div>
+                  )}
+                  {pendingConfirm === `delete:${b.key}` && (
+                    <div style={{ display: 'flex', gap: 8, marginTop: 6, paddingTop: 6, borderTop: '1px solid var(--border)' }}>
+                      <span style={{ flex: 1, fontSize: 12, color: 'var(--text-muted)' }}>
+                        Delete this backup permanently?
+                      </span>
+                      <button type="button" className="ops-btn" style={{ marginTop: 0, flex: 'none', background: 'rgba(239,68,68,0.15)', color: '#fca5a5' }}
+                        onClick={() => remove(b.key)} disabled={!!busy}>Delete</button>
+                      <button type="button" className="ops-btn" style={{ marginTop: 0, flex: 'none' }}
+                        onClick={() => setPendingConfirm(null)}>Cancel</button>
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>

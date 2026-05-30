@@ -34,6 +34,8 @@ export function ServerSchedulesSection({
   const [items, setItems] = useState<Schedule[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // Inline delete confirmation (window.confirm is broken in Tauri mobile WebViews).
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   // create form
   const [adding, setAdding] = useState(false);
   const [cron, setCron] = useState(CRON_PRESETS[0]!.cron);
@@ -107,9 +109,9 @@ export function ServerSchedulesSection({
   const toggle = (s: Schedule) => upsert({ ...s, enabled: !s.enabled }, `toggle:${s.id}`);
 
   const remove = async (id: string) => {
-    if (!window.confirm('Delete this schedule?')) return;
     setBusy(`delete:${id}`);
     setErr(null);
+    setPendingDelete(null);
     try {
       await relayRequest({ cmd: 'server.delete_schedule', target: serverId, args: args({ schedule_id: id }) });
       await refresh();
@@ -148,25 +150,36 @@ export function ServerSchedulesSection({
           ) : (
             <ul className="ops-list">
               {items.map((s) => (
-                <li key={s.id} className="ops-row">
-                  <div className="ops-row-main">
-                    <span className="ops-row-title">{describeAction(s.action)}</span>
-                    <span className="ops-row-sub">
-                      <code>{s.cron}</code>
-                      {s.lastRun ? ` · last ${new Date(s.lastRun).toLocaleString()}` : ''}
-                    </span>
+                <li key={s.id} className="ops-row" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div className="ops-row-main">
+                      <span className="ops-row-title">{describeAction(s.action)}</span>
+                      <span className="ops-row-sub">
+                        <code>{s.cron}</code>
+                        {s.lastRun ? ` · last ${new Date(s.lastRun).toLocaleString()}` : ''}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      className={`ops-toggle${s.enabled ? ' ops-toggle--on' : ''}`}
+                      onClick={() => toggle(s)}
+                      disabled={!!busy}
+                    >
+                      {busy === `toggle:${s.id}` ? '…' : s.enabled ? 'On' : 'Off'}
+                    </button>
+                    <button type="button" className="icon-btn ops-danger" onClick={() => setPendingDelete(s.id)} disabled={!!busy} aria-label="Delete">
+                      {busy === `delete:${s.id}` ? <Loader2 size={14} className="spin" /> : <Trash2 size={14} />}
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    className={`ops-toggle${s.enabled ? ' ops-toggle--on' : ''}`}
-                    onClick={() => toggle(s)}
-                    disabled={!!busy}
-                  >
-                    {busy === `toggle:${s.id}` ? '…' : s.enabled ? 'On' : 'Off'}
-                  </button>
-                  <button type="button" className="icon-btn ops-danger" onClick={() => remove(s.id)} disabled={!!busy} aria-label="Delete">
-                    {busy === `delete:${s.id}` ? <Loader2 size={14} className="spin" /> : <Trash2 size={14} />}
-                  </button>
+                  {pendingDelete === s.id && (
+                    <div style={{ display: 'flex', gap: 8, marginTop: 6, paddingTop: 6, borderTop: '1px solid var(--border)' }}>
+                      <span style={{ flex: 1, fontSize: 12, color: 'var(--text-muted)' }}>Delete this schedule?</span>
+                      <button type="button" className="ops-btn" style={{ marginTop: 0, flex: 'none', background: 'rgba(239,68,68,0.15)', color: '#fca5a5' }}
+                        onClick={() => remove(s.id)} disabled={!!busy}>Delete</button>
+                      <button type="button" className="ops-btn" style={{ marginTop: 0, flex: 'none' }}
+                        onClick={() => setPendingDelete(null)}>Cancel</button>
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>

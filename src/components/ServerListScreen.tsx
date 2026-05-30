@@ -327,6 +327,29 @@ export function ServerListScreen({ me, onlineNodeIds, desktopOnline, embedded, o
 
 // ---------------------------------------------------------------------------
 
+// Forged monogram tile: a 2-letter glyph on a deterministic on-brand
+// gradient, echoing the design's GameIcon. The INITIALS carry the identity
+// (colour is decorative), so it stays legible regardless of colour vision.
+const MONOGRAM_GRADIENTS = [
+  'linear-gradient(135deg, #fb923c, #c2410c)', // ember
+  'linear-gradient(135deg, #38bdf8, #0369a1)', // steel
+  'linear-gradient(135deg, #34d399, #047857)', // emerald
+  'linear-gradient(135deg, #a78bfa, #6d28d9)', // violet
+  'linear-gradient(135deg, #f472b6, #be185d)', // rose
+  'linear-gradient(135deg, #facc15, #b45309)', // amber
+];
+function serverInitials(name: string): string {
+  const words = name.trim().split(/[\s_-]+/).filter(Boolean);
+  if (words.length === 0) return '··';
+  if (words.length === 1) return words[0]!.slice(0, 2);
+  return words[0]![0]! + words[1]![0]!;
+}
+function monogramGradient(name: string): string {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  return MONOGRAM_GRADIENTS[h % MONOGRAM_GRADIENTS.length]!;
+}
+
 function ServerRow({
   server,
   status,
@@ -345,7 +368,9 @@ function ServerRow({
   return (
     <li>
       <button type="button" className="server-row" onClick={onOpen}>
-        <div className="server-row-icon"><ServerCog size={18} /></div>
+        <div className="server-row-icon" style={{ background: monogramGradient(server.name) }}>
+          {serverInitials(server.name)}
+        </div>
         <div className="server-row-body">
           <div className="server-row-name-row">
             <div className="server-row-name">{server.name}</div>
