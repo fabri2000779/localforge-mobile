@@ -89,6 +89,15 @@ export function cloudLogout(): Promise<void> {
   return invoke('cloud_logout');
 }
 
+/**
+ * Permanently delete the account + all cloud data, then clear the local
+ * session. Rejects with a cloud error (`subscription_active`) if a live
+ * Stripe subscription is still attached — cancel billing first.
+ */
+export function cloudDeleteAccount(): Promise<void> {
+  return invoke('cloud_delete_account');
+}
+
 export function cloudRequestPasswordReset(email: string): Promise<void> {
   return invoke('cloud_request_password_reset', { email });
 }
@@ -435,7 +444,7 @@ export async function relayRequest(opts: {
 // callers subscribe with `onSignedIn()` below before invoking start.
 // ---------------------------------------------------------------------------
 
-export type OAuthProvider = 'google' | 'discord' | 'github';
+export type OAuthProvider = 'apple' | 'google' | 'discord' | 'github';
 
 export function cloudOAuthStart(provider: OAuthProvider): Promise<void> {
   return invoke('cloud_oauth_start', { provider });

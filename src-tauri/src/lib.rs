@@ -55,6 +55,7 @@ pub fn run() {
             auth::cloud_login,
             auth::cloud_signup,
             auth::cloud_logout,
+            auth::cloud_delete_account,
             auth::cloud_request_password_reset,
             oauth::cloud_oauth_start,
             sync::cloud_servers_list,

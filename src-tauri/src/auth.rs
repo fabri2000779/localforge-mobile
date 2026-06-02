@@ -167,6 +167,32 @@ pub async fn cloud_logout(app: tauri::AppHandle) -> Result<(), ApiError> {
     Ok(())
 }
 
+/// Permanently delete the signed-in account and ALL cloud data, then wipe
+/// the local session + key material. Mirrors `cloud_logout` but hits the
+/// account-deletion endpoint instead of the session-revoke one.
+///
+/// The API requires `confirm: "DELETE"` and rejects with HTTP 409
+/// (`subscription_active`) while a live Stripe subscription is attached — we
+/// propagate that so the UI can tell the user to cancel billing first. On ANY
+/// error we leave the local session intact (no half-signed-out state).
+#[tauri::command]
+pub async fn cloud_delete_account(app: tauri::AppHandle) -> Result<(), ApiError> {
+    let Some(token) = load_token(&app) else {
+        return Err(ApiError::Decode("no active session".into()));
+    };
+    let _: serde_json::Value = localforge_cloud_client::api::post(
+        "/v1/account/delete",
+        &serde_json::json!({ "confirm": "DELETE" }),
+        Some(&token),
+    )
+    .await?;
+    // Account is gone — drop the token and every cached key (DEK / org keys /
+    // X25519 secret) so nothing of the deleted user lingers on the device.
+    clear_token(&app).map_err(|e| ApiError::Decode(format!("token store: {e}")))?;
+    crate::vault::clear_local_keys(&app);
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn cloud_request_password_reset(email: String) -> Result<(), ApiError> {
     auth::request_password_reset(&email).await

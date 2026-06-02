@@ -229,6 +229,12 @@ export function LoginScreen({ onSignedIn }: Props) {
 
           <div className="oauth-row">
             <OAuthButton
+              provider="apple"
+              pending={oauthPending === 'apple'}
+              disabled={submitting || (oauthPending !== null && oauthPending !== 'apple')}
+              onClick={() => startOAuth('apple')}
+            />
+            <OAuthButton
               provider="google"
               pending={oauthPending === 'google'}
               disabled={submitting || (oauthPending !== null && oauthPending !== 'google')}
@@ -367,7 +373,7 @@ function OAuthButton({
   disabled,
   onClick,
 }: {
-  provider: 'google' | 'discord' | 'github';
+  provider: 'apple' | 'google' | 'discord' | 'github';
   pending?: boolean;
   disabled?: boolean;
   onClick?: () => void;
@@ -391,7 +397,14 @@ function OAuthButton({
 /** Inline brand SVGs — rendered as markup, so there are no image
  *  assets to 404 in the bundled WebView (the old CSS color-chips looked
  *  broken). */
-function ProviderGlyph({ provider }: { provider: 'google' | 'discord' | 'github' }) {
+function ProviderGlyph({ provider }: { provider: 'apple' | 'google' | 'discord' | 'github' }) {
+  if (provider === 'apple') {
+    return (
+      <svg className="oauth-glyph" viewBox="0 0 24 24" width={18} height={18} fill="currentColor" aria-hidden>
+        <path d="M16.365 1.43c0 1.14-.42 2.2-1.13 3.02-.83.97-2.2 1.72-3.34 1.63-.14-1.13.46-2.32 1.12-3.06.78-.9 2.16-1.55 3.35-1.59zM20.78 17.5c-.6 1.37-.88 1.98-1.66 3.19-1.08 1.69-2.6 3.79-4.48 3.8-1.67.02-2.1-1.09-4.37-1.08-2.27.01-2.74 1.1-4.41 1.08-1.88-.01-3.32-1.91-4.4-3.6C-1.04 16.55-1.4 9.96 1.87 6.96c1.17-1.08 2.71-1.71 4.18-1.71 1.5 0 2.44 1.08 4.37 1.08 1.87 0 3-1.08 4.74-1.08 1.31 0 2.7.71 3.69 1.94-3.24 1.78-2.71 6.41.93 8.31z" />
+      </svg>
+    );
+  }
   if (provider === 'google') {
     return (
       <svg className="oauth-glyph" viewBox="0 0 48 48" width={18} height={18} aria-hidden>

@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import {
   cloudLogout,
+  cloudDeleteAccount,
   cloudOrgsAcceptInvite,
   cloudSyncKeySetup,
   cloudSyncKeyStatus,
@@ -57,6 +58,9 @@ export function AccountScreen({
   onSignedOut: () => void;
 }) {
   const [loggingOut, setLoggingOut] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteErr, setDeleteErr] = useState<string | null>(null);
 
   async function logout() {
     setLoggingOut(true);
@@ -64,6 +68,26 @@ export function AccountScreen({
       await cloudLogout();
     } finally {
       onSignedOut();
+    }
+  }
+
+  async function deleteAccount() {
+    setDeleting(true);
+    setDeleteErr(null);
+    try {
+      await cloudDeleteAccount();
+      // Account + all cloud data are gone and the local session is wiped —
+      // drop back to the sign-in screen.
+      onSignedOut();
+    } catch (e) {
+      setDeleteErr(
+        isCloudError(e)
+          ? e.code === 'subscription_active'
+            ? 'Cancel your subscription before deleting your account.'
+            : (e.message ?? e.code)
+          : 'Could not delete the account. Check your connection and try again.',
+      );
+      setDeleting(false);
     }
   }
 
@@ -170,6 +194,49 @@ export function AccountScreen({
         {loggingOut ? <RefreshCw size={15} className="spin" /> : <LogOut size={15} />}
         {loggingOut ? 'Signing out…' : 'Sign out'}
       </button>
+
+      {!confirmingDelete ? (
+        <button
+          type="button"
+          className="ghost-btn danger-btn"
+          onClick={() => setConfirmingDelete(true)}
+          disabled={loggingOut}
+        >
+          <Trash2 size={15} /> Delete account
+        </button>
+      ) : (
+        <section className="card" style={{ borderColor: 'rgba(239,68,68,0.4)' }}>
+          <div className="lf-sectlabel" style={{ color: '#fca5a5' }}>Delete account</div>
+          <p className="home-sub" style={{ margin: '0 0 10px' }}>
+            This permanently deletes your LocalForge account and all cloud data —
+            synced servers, machines, team members, backup settings and
+            encryption keys. It can’t be undone. The servers on your own
+            machines are not affected.
+          </p>
+          {deleteErr && <div className="cfg-err" style={{ marginBottom: 8 }}>{deleteErr}</div>}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              type="button"
+              className="ops-btn"
+              style={{ marginTop: 0, flex: 1, background: 'rgba(239,68,68,0.15)', color: '#fca5a5' }}
+              onClick={() => void deleteAccount()}
+              disabled={deleting}
+            >
+              {deleting ? <Loader2 size={15} className="spin" /> : <Trash2 size={15} />}
+              {deleting ? 'Deleting…' : 'Permanently delete'}
+            </button>
+            <button
+              type="button"
+              className="ops-btn"
+              style={{ marginTop: 0 }}
+              onClick={() => { setConfirmingDelete(false); setDeleteErr(null); }}
+              disabled={deleting}
+            >
+              Cancel
+            </button>
+          </div>
+        </section>
+      )}
 
       <div style={{ textAlign: 'center', color: 'var(--text-dim)', fontSize: 11, marginTop: 4 }}>
         LocalForge mobile
