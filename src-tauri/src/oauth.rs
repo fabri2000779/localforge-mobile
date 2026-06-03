@@ -50,13 +50,22 @@ pub async fn cloud_oauth_start(app: AppHandle, provider: String) -> Result<(), S
 
     #[cfg(mobile)]
     {
-        // In-app browser. Blocks until the user finishes signing in and
-        // the browser redirects to localforge://auth/callback, then we
-        // run the same callback handler the deep-link path used.
+        // In-app browser (ASWebAuthenticationSession on iOS, Chrome Custom
+        // Tabs on Android). `mode=inapp` tells the cloud to answer the OAuth
+        // callback with a DIRECT 302 to localforge://auth/callback — which the
+        // session captures instantly and reliably — instead of the desktop
+        // HTML "Returning to LocalForge…" bouncer. That bouncer rendered a
+        // blank page inside the in-app session, raced the custom-scheme
+        // capture, then auto-closed WITHOUT signing in (the "white screen →
+        // tap Login again" bug). See cloud apps/api/src/routes/oauth.ts.
+        let url = format!("{url}&mode=inapp");
+
+        // Blocks until the session redirects to localforge://auth/callback,
+        // then we run the same callback handler the deep-link path used.
         use tauri_plugin_webauth::WebauthExt;
         let resp = app
             .webauth()
-            .authenticate(url.to_string(), "localforge".to_string())
+            .authenticate(url, "localforge".to_string())
             .map_err(|e| e.to_string())?;
         handle_auth_callback(app, resp.url).await;
         Ok(())

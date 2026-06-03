@@ -1,5 +1,6 @@
 import ReactDOM from 'react-dom/client';
 import App from './App';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { applyPlatformClass } from './lib/platform';
 // Crucible brand faces, self-hosted so they render offline (a phone
 // controlling a server may be on spotty network). Space Grotesk is the
@@ -21,5 +22,7 @@ applyPlatformClass();
 // mobile app turns out not to have streaming on these surfaces we can
 // turn it back on safely.
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
-  <App />,
+  <ErrorBoundary>
+    <App />
+  </ErrorBoundary>,
 );
