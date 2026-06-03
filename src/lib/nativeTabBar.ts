@@ -31,8 +31,30 @@ export function hideNativeTabBar(): Promise<void> {
   return invoke<void>('plugin:glasstabbar|hide_bar').catch(() => {});
 }
 
-/** Subscribe to native tab taps. Resolves with a handle; call `.unregister()`
- *  to tear it down. */
+/** Subscribe to native tab taps via the plugin event. Resolves with a handle;
+ *  call `.unregister()` to tear it down. Payload shape varies across Tauri
+ *  versions, so we extract the id defensively. (A second delivery path —
+ *  `window.__lfNativeTabSelect`, called from Swift — backs this up.) */
 export function onNativeTabSelect(cb: (id: string) => void): Promise<PluginListener> {
-  return addPluginListener('glasstabbar', 'select', (p: { id: string }) => cb(p.id));
+  return addPluginListener('glasstabbar', 'select', (raw: unknown) => {
+    const id = extractId(raw);
+    if (id) cb(id);
+  });
+}
+
+function extractId(raw: unknown): string | null {
+  let v: unknown = raw;
+  if (typeof v === 'string') {
+    try {
+      v = JSON.parse(v);
+    } catch {
+      return raw as string;
+    }
+  }
+  if (v && typeof v === 'object') {
+    const o = v as { id?: unknown; payload?: { id?: unknown } };
+    if (typeof o.id === 'string') return o.id;
+    if (o.payload && typeof o.payload.id === 'string') return o.payload.id;
+  }
+  return null;
 }

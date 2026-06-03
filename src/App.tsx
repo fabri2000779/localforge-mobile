@@ -309,15 +309,20 @@ function App() {
   const tabRef = useRef<Tab>('servers');
   if (currentTab) tabRef.current = currentTab;
 
-  // Bridge native taps → route switch. Subscribed once while signed in.
+  // Bridge native taps → route switch. Two paths (the plugin `select` event
+  // AND a `window.__lfNativeTabSelect` global the Swift calls via the WebView)
+  // so a tap lands even if the plugin-event path isn't delivered.
   useEffect(() => {
     if (!hasNativeTabBar || !signedIn) return;
+    const w = window as unknown as { __lfNativeTabSelect?: (id: string) => void };
+    w.__lfNativeTabSelect = (id) => selectTab(id as Tab);
     let listener: { unregister: () => void } | null = null;
     void onNativeTabSelect((id) => selectTab(id as Tab)).then((l) => {
       listener = l;
     });
     return () => {
       listener?.unregister();
+      delete w.__lfNativeTabSelect;
     };
   }, [signedIn, selectTab]);
 

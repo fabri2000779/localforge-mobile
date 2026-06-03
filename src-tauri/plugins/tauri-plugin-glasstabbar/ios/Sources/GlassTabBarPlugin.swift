@@ -1,6 +1,7 @@
 import Foundation
 import Tauri
 import UIKit
+import WebKit
 
 // Native iOS tab bar overlaid on the Tauri webview. On iOS 26 the system
 // UITabBar renders with the Liquid Glass material automatically (it's the
@@ -114,10 +115,29 @@ class GlassTabBarPlugin: Plugin, UITabBarDelegate {
   }
 
   // Tap → tell JS which tab. JS owns the content switch + hides the CSS bar.
+  // TWO delivery paths, because the Tauri plugin-event path is unverified on
+  // this app's Tauri version (the IAP/webauth plugins are request/response
+  // only). Either one switching the tab is enough; selectTab is idempotent.
   func tabBar(_ tabBar: UITabBar, didSelect item: UITabBarItem) {
     let idx = item.tag
     guard idx >= 0 && idx < itemIds.count else { return }
-    self.trigger("select", data: ["id": itemIds[idx]])
+    let id = itemIds[idx]
+    // Path 1: the documented plugin event (addPluginListener on the JS side).
+    self.trigger("select", data: ["id": id])
+    // Path 2: call a JS global straight through the WebView. `id` is one of
+    // our own fixed ids (servers/machines/team/account) — no injection risk.
+    if let window = keyWindow(), let webView = Self.findWebView(in: window) {
+      let js = "window.__lfNativeTabSelect && window.__lfNativeTabSelect('\(id)')"
+      webView.evaluateJavaScript(js, completionHandler: nil)
+    }
+  }
+
+  private static func findWebView(in view: UIView) -> WKWebView? {
+    if let wv = view as? WKWebView { return wv }
+    for sub in view.subviews {
+      if let found = findWebView(in: sub) { return found }
+    }
+    return nil
   }
 }
 
