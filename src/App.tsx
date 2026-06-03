@@ -37,6 +37,13 @@ import {
   type ServerSummary,
 } from './lib/cloud';
 import { useSwipeBack } from './lib/useSwipeBack';
+import {
+  hasNativeTabBar,
+  showNativeTabBar,
+  hideNativeTabBar,
+  setNativeSelected,
+  onNativeTabSelect,
+} from './lib/nativeTabBar';
 import './App.css';
 
 // A server detail / config screen pushed ABOVE the tab shell. Null when
@@ -51,6 +58,15 @@ type State =
   | { kind: 'signed-in'; me: Me; tab: Tab; overlay: Overlay | null };
 
 const TAB_ORDER: Tab[] = ['servers', 'machines', 'team', 'account'];
+
+// Native iOS tab bar items — same order as TAB_ORDER. The React TabBar uses
+// lucide icons; the native UITabBar needs Apple SF Symbols.
+const NATIVE_TABS = [
+  { id: 'servers', label: 'Servers', sfSymbol: 'square.grid.2x2' },
+  { id: 'machines', label: 'Machines', sfSymbol: 'externaldrive' },
+  { id: 'team', label: 'Team', sfSymbol: 'person.2' },
+  { id: 'account', label: 'Account', sfSymbol: 'person.crop.circle' },
+];
 
 function App() {
   const [state, setState] = useState<State>({ kind: 'loading' });
@@ -276,6 +292,48 @@ function App() {
   const canGoBack = state.kind === 'signed-in' && state.overlay !== null;
   useSwipeBack(goBack, canGoBack);
 
+  // Switch tab: mark it visited (so it stays mounted) + clear any overlay.
+  // A stable callback so the native-bar tap listener can hold onto it.
+  const selectTab = useCallback((tab: Tab) => {
+    setVisited((v) => (v.has(tab) ? v : new Set(v).add(tab)));
+    setState((s) => (s.kind === 'signed-in' ? { ...s, tab, overlay: null } : s));
+  }, []);
+
+  // ── Native iOS tab bar (glasstabbar plugin) ───────────────────────────────
+  // iOS gets a real UITabBar (Liquid Glass on iOS 26) mounted over the webview;
+  // the CSS <TabBar> is hidden there. We hide the native bar under a full-screen
+  // overlay (server detail/config) and when signed out. Android/desktop no-op.
+  const signedIn = state.kind === 'signed-in';
+  const hasOverlay = state.kind === 'signed-in' && state.overlay !== null;
+  const currentTab = state.kind === 'signed-in' ? state.tab : null;
+  const tabRef = useRef<Tab>('servers');
+  if (currentTab) tabRef.current = currentTab;
+
+  // Bridge native taps → route switch. Subscribed once while signed in.
+  useEffect(() => {
+    if (!hasNativeTabBar || !signedIn) return;
+    let listener: { unregister: () => void } | null = null;
+    void onNativeTabSelect((id) => selectTab(id as Tab)).then((l) => {
+      listener = l;
+    });
+    return () => {
+      listener?.unregister();
+    };
+  }, [signedIn, selectTab]);
+
+  // Mount the bar on a tab root; remove it under an overlay or when signed out.
+  useEffect(() => {
+    if (!hasNativeTabBar) return;
+    if (signedIn && !hasOverlay) void showNativeTabBar(NATIVE_TABS, tabRef.current);
+    else void hideNativeTabBar();
+  }, [signedIn, hasOverlay]);
+
+  // Keep the native highlight in sync when the route changes programmatically.
+  useEffect(() => {
+    if (!hasNativeTabBar || !signedIn || hasOverlay || !currentTab) return;
+    void setNativeSelected(currentTab);
+  }, [signedIn, hasOverlay, currentTab]);
+
   // Rendered (fixed-position) above whatever shell is showing, so an invite
   // can be accepted from the login screen or any tab.
   const inviteBanner = invite ? (
@@ -316,13 +374,6 @@ function App() {
     );
   }
 
-  // Switch tab: remember it's been visited (so it stays mounted) and clear
-  // any overlay.
-  const selectTab = (tab: Tab) => {
-    setVisited((v) => (v.has(tab) ? v : new Set(v).add(tab)));
-    setState((s) => (s.kind === 'signed-in' ? { ...s, tab, overlay: null } : s));
-  };
-
   return (
     <div className="app-shell">
       {inviteBanner}
@@ -340,7 +391,9 @@ function App() {
             ) : null,
           )}
         </div>
-        <TabBar active={state.tab} onChange={selectTab} />
+        {/* iOS uses the native UITabBar (glasstabbar plugin); only render the
+            CSS bar on Android/desktop. */}
+        {!hasNativeTabBar && <TabBar active={state.tab} onChange={selectTab} />}
       </div>
       {state.overlay && renderOverlay(state, state.overlay)}
     </div>

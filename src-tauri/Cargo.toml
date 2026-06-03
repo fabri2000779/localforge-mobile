@@ -47,6 +47,10 @@ tauri-plugin-iap = { path = "plugins/tauri-plugin-iap" }
 # that hands the localforge://auth/callback redirect straight back.
 tauri-plugin-webauth = { path = "plugins/tauri-plugin-webauth" }
 
+# Native iOS tab bar (renders as Liquid Glass on iOS 26) overlaid on the
+# webview. No-op on Android/desktop — they keep the in-webview CSS bar.
+tauri-plugin-glasstabbar = { path = "plugins/tauri-plugin-glasstabbar" }
+
 # Shared crates pulled from the public localforge repo. Cargo walks
 # the repo tree at fetch time, finds the Cargo.toml whose package
 # name matches, and uses that crate.

@@ -1,0 +1,22 @@
+[package]
+name = "tauri-plugin-glasstabbar"
+version = "0.1.0"
+description = "Native iOS UITabBar (Liquid Glass on iOS 26) overlaid on the LocalForge mobile webview"
+edition = "2021"
+rust-version = "1.77.2"
+# tauri-plugin's build helper requires `links` to equal the package name.
+links = "tauri-plugin-glasstabbar"
+
+# A Tauri 2 mobile plugin. On iOS it mounts a native UITabBar over the
+# webview (the system bar renders with the Liquid Glass material on iOS 26)
+# and bridges taps back to the JS navigation. On Android + desktop the
+# commands are no-ops — those platforms keep the in-webview CSS tab bar.
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }
