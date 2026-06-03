@@ -20,6 +20,7 @@ import { MachinesScreen } from './components/MachinesScreen';
 import { TeamScreen } from './components/TeamScreen';
 import { AccountScreen } from './components/AccountScreen';
 import { AcceptInviteBanner } from './components/AcceptInviteBanner';
+import { SyncKeyDialog } from './components/SyncKeyDialog';
 import {
   cloudClearOrgDek,
   cloudInvalidateLocalDek,
@@ -29,12 +30,14 @@ import {
   cloudRelayStart,
   cloudRelayStop,
   cloudSetActiveOrg,
+  cloudSyncKeyStatus,
   cloudUnlockOrgDek,
   subscribeInviteReceived,
   subscribeRelayEvent,
   type Me,
   type OrgSummary,
   type ServerSummary,
+  type SyncKeyStatus,
 } from './lib/cloud';
 import { useSwipeBack } from './lib/useSwipeBack';
 import {
@@ -84,6 +87,12 @@ function App() {
   // A pending team invitation (from a `localforge://invite` deep link), shown
   // as a top banner until the user accepts or dismisses it.
   const [invite, setInvite] = useState<{ token: string; secret?: string | null } | null>(null);
+  // Envelope-encryption (sync key) status for the signed-in user, and whether
+  // the setup/unlock dialog was dismissed this session. OAuth users have no
+  // account password to derive the KEK from, so they MUST set a passphrase here
+  // or their keypair is never published (team grants + config decrypt break).
+  const [syncKeyStatus, setSyncKeyStatus] = useState<SyncKeyStatus | null>(null);
+  const [syncKeyDismissed, setSyncKeyDismissed] = useState(false);
 
   useEffect(() => {
     cloudMe()
@@ -141,6 +150,21 @@ function App() {
     }
     void cloudOrgsList().then(setOrgs).catch(() => setOrgs([]));
   }, [signedInId]);
+
+  // Sync-key status follows the signed-in user; re-checked after a successful
+  // setup/unlock (the dialog hides when it flips to 'unlocked').
+  const refreshSyncKey = useCallback(() => {
+    cloudSyncKeyStatus().then(setSyncKeyStatus).catch(() => setSyncKeyStatus(null));
+  }, []);
+  useEffect(() => {
+    if (!signedInId) {
+      setSyncKeyStatus(null);
+      setSyncKeyDismissed(false);
+      return;
+    }
+    setSyncKeyDismissed(false);
+    refreshSyncKey();
+  }, [signedInId, refreshSyncKey]);
 
   useEffect(() => {
     if (!relayUserId) return;
@@ -305,6 +329,10 @@ function App() {
   // overlay (server detail/config) and when signed out. Android/desktop no-op.
   const signedIn = state.kind === 'signed-in';
   const hasOverlay = state.kind === 'signed-in' && state.overlay !== null;
+  // The sync-key modal sits above everything (incl. the native tab bar), so the
+  // native bar is hidden while it's up.
+  const syncDialogOpen =
+    signedIn && !syncKeyDismissed && syncKeyStatus !== null && syncKeyStatus !== 'unlocked';
   const currentTab = state.kind === 'signed-in' ? state.tab : null;
   const tabRef = useRef<Tab>('servers');
   if (currentTab) tabRef.current = currentTab;
@@ -329,9 +357,9 @@ function App() {
   // Mount the bar on a tab root; remove it under an overlay or when signed out.
   useEffect(() => {
     if (!hasNativeTabBar) return;
-    if (signedIn && !hasOverlay) void showNativeTabBar(NATIVE_TABS, tabRef.current);
+    if (signedIn && !hasOverlay && !syncDialogOpen) void showNativeTabBar(NATIVE_TABS, tabRef.current);
     else void hideNativeTabBar();
-  }, [signedIn, hasOverlay]);
+  }, [signedIn, hasOverlay, syncDialogOpen]);
 
   // Keep the native highlight in sync when the route changes programmatically.
   useEffect(() => {
@@ -401,6 +429,13 @@ function App() {
         {!hasNativeTabBar && <TabBar active={state.tab} onChange={selectTab} />}
       </div>
       {state.overlay && renderOverlay(state, state.overlay)}
+      {syncDialogOpen && (
+        <SyncKeyDialog
+          status={syncKeyStatus as Exclude<SyncKeyStatus, 'unlocked'>}
+          onDone={refreshSyncKey}
+          onSkip={() => setSyncKeyDismissed(true)}
+        />
+      )}
     </div>
   );
 
