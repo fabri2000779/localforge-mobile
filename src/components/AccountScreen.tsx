@@ -19,10 +19,12 @@ import {
   Lock,
   Loader2,
   Link2,
+  ExternalLink,
 } from 'lucide-react';
 import {
   cloudLogout,
   cloudDeleteAccount,
+  openManageSubscriptions,
   cloudOrgsAcceptInvite,
   cloudSyncKeySetup,
   cloudSyncKeyStatus,
@@ -37,6 +39,7 @@ import {
   type BackupTargetView,
   type BackupTargetInput,
 } from '../lib/cloud';
+import { detectPlatform } from '../lib/platform';
 
 export function AccountScreen({
   me,
@@ -93,6 +96,12 @@ export function AccountScreen({
 
   const plan = me.subscription.plan;
   const planLabel = plan[0]!.toUpperCase() + plan.slice(1);
+  // Apple/Google forbid apps from cancelling a user's store subscription, so on
+  // account deletion we must warn them it keeps billing and hand them off to the
+  // store's manage-subscriptions page (required by App Store Guideline 5.1.1(v)).
+  const platform = detectPlatform();
+  const storeName = platform === 'android' ? 'Google Play' : 'the App Store';
+  const showSubWarning = plan !== 'free' && (platform === 'ios' || platform === 'android');
   const displayName = me.displayName?.trim() || me.email.split('@')[0];
   const initials = displayName.slice(0, 2).toUpperCase();
   const reachable = (desktopOnline ? 1 : 0) + onlineNodeIds.size;
@@ -213,6 +222,39 @@ export function AccountScreen({
             encryption keys. It can’t be undone. The servers on your own
             machines are not affected.
           </p>
+          {showSubWarning && (
+            <div
+              style={{
+                marginBottom: 10,
+                padding: '10px 12px',
+                borderRadius: 10,
+                background: 'rgba(251,191,36,0.10)',
+                border: '1px solid rgba(251,191,36,0.30)',
+                fontSize: 12.5,
+                lineHeight: 1.5,
+                color: 'var(--text-muted)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 8,
+                alignItems: 'flex-start',
+              }}
+            >
+              <span>
+                Deleting your account does{' '}
+                <strong style={{ color: 'var(--text-strong)' }}>not</strong> cancel
+                your subscription. If you subscribed through {storeName}, you'll
+                keep being billed until you cancel it there yourself.
+              </span>
+              <button
+                type="button"
+                className="ops-btn"
+                style={{ marginTop: 0 }}
+                onClick={() => void openManageSubscriptions()}
+              >
+                <ExternalLink size={14} /> Manage subscription
+              </button>
+            </div>
+          )}
           {deleteErr && <div className="cfg-err" style={{ marginBottom: 8 }}>{deleteErr}</div>}
           <div style={{ display: 'flex', gap: 8 }}>
             <button

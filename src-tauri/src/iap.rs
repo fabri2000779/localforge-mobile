@@ -88,3 +88,21 @@ pub async fn cloud_iap_verify_google(
     .await?;
     auth::fetch_me(&token).await
 }
+
+/// Open the platform's subscription-management UI so the user can cancel their
+/// IAP subscription themselves. Apps CANNOT cancel an Apple/Google
+/// subscription on the user's behalf (it's billed against their store account,
+/// not ours), so on account deletion we warn them and hand them off here.
+/// Apple's documented deep link is https://apps.apple.com/account/subscriptions;
+/// Google uses the Play equivalent.
+#[tauri::command]
+pub fn open_manage_subscriptions(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    #[cfg(target_os = "android")]
+    let url = "https://play.google.com/store/account/subscriptions";
+    #[cfg(not(target_os = "android"))]
+    let url = "https://apps.apple.com/account/subscriptions";
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|e| format!("failed to open subscription settings: {e}"))
+}

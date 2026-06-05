@@ -82,6 +82,7 @@ pub fn run() {
             relay::cloud_relay_send_cmd,
             iap::cloud_iap_verify_apple,
             iap::cloud_iap_verify_google,
+            iap::open_manage_subscriptions,
         ])
         .setup(|app| {
             tracing::info!(version = env!("CARGO_PKG_VERSION"), "LocalForge mobile starting");

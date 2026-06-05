@@ -93,9 +93,19 @@ export function cloudLogout(): Promise<void> {
  * Permanently delete the account + all cloud data, then clear the local
  * session. Rejects with a cloud error (`subscription_active`) if a live
  * Stripe subscription is still attached — cancel billing first.
+ *
+ * NOTE: an Apple/Google IAP subscription is NOT (and cannot be) cancelled by
+ * this — it's billed against the user's store account, not ours. The delete
+ * screen warns the user and points them to `openManageSubscriptions()`.
  */
 export function cloudDeleteAccount(): Promise<void> {
   return invoke('cloud_delete_account');
+}
+
+/** Open the OS subscription-management UI (App Store / Google Play) so the
+ *  user can cancel their IAP subscription. We can't cancel it for them. */
+export function openManageSubscriptions(): Promise<void> {
+  return invoke('open_manage_subscriptions');
 }
 
 export function cloudRequestPasswordReset(email: string): Promise<void> {
