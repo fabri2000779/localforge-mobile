@@ -106,3 +106,23 @@ pub fn open_manage_subscriptions(app: tauri::AppHandle) -> Result<(), String> {
         .open_url(url, None::<&str>)
         .map_err(|e| format!("failed to open subscription settings: {e}"))
 }
+
+/// Open one of our hosted legal pages (Privacy Policy / Terms of Use) in the
+/// system browser — required on the subscription paywall by App Store Guideline
+/// 3.1.2(c). Restricted to a fixed allow-list so the WebView can never ask us to
+/// open an arbitrary URL.
+#[tauri::command]
+pub fn open_external_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    const ALLOWED: &[&str] = &[
+        "https://localforge.gg/privacy",
+        "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/",
+        "https://localforge.gg/terms",
+    ];
+    if !ALLOWED.contains(&url.as_str()) {
+        return Err(format!("refused to open non-allow-listed url: {url}"));
+    }
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|e| format!("failed to open url: {e}"))
+}

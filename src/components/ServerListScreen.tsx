@@ -26,6 +26,7 @@ import {
   cloudListMachines,
   cloudRelaySendCmd,
   cloudServersList,
+  openExternalUrl,
   isCloudError,
   subscribeRelayConnected,
   subscribeRelayDisconnected,
@@ -543,6 +544,7 @@ function Paywall({
               <div className="paywall-plan-info">
                 <div className="paywall-plan-name">{planTitle(p.plan)}</div>
                 <div className="paywall-plan-desc">{planBlurb(p.plan)}</div>
+                <div className="paywall-plan-terms">{p.displayPrice} per month · auto-renewing monthly subscription</div>
               </div>
               <button type="button" className="auth-submit paywall-buy" disabled={busy} onClick={() => buy(p.id)}>
                 {busyId === p.id ? <Loader2 size={15} className="spin" /> : `${p.displayPrice}/mo`}
@@ -559,6 +561,15 @@ function Paywall({
         Subscriptions renew automatically each month until cancelled. Cancel
         anytime in your device's store account settings. You're currently on{' '}
         <strong>{plan[0]!.toUpperCase() + plan.slice(1)}</strong>.
+      </p>
+      <p className="paywall-legal">
+        <button type="button" className="paywall-legal-link" onClick={() => void openExternalUrl('https://localforge.gg/privacy')}>
+          Privacy Policy
+        </button>
+        <span className="paywall-legal-sep"> · </span>
+        <button type="button" className="paywall-legal-link" onClick={() => void openExternalUrl('https://www.apple.com/legal/internet-services/itunes/dev/stdeula/')}>
+          Terms of Use (EULA)
+        </button>
       </p>
     </div>
   );

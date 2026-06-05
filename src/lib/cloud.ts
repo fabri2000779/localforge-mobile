@@ -108,6 +108,13 @@ export function openManageSubscriptions(): Promise<void> {
   return invoke('open_manage_subscriptions');
 }
 
+/** Open one of our hosted legal pages (Privacy Policy / Terms of Use) in the
+ *  system browser — required on the subscription paywall (App Store 3.1.2(c)).
+ *  The Rust side enforces an allow-list. */
+export function openExternalUrl(url: string): Promise<void> {
+  return invoke('open_external_url', { url });
+}
+
 export function cloudRequestPasswordReset(email: string): Promise<void> {
   return invoke('cloud_request_password_reset', { email });
 }

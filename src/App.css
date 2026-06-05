@@ -809,6 +809,29 @@ input, textarea {
   line-height: 1.45;
   margin-top: 2px;
 }
+/* Explicit per-plan subscription terms (price + length) for App Store 3.1.2(c). */
+.paywall-plan-terms {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 4px;
+}
+/* Functional Privacy Policy + Terms of Use links required on the paywall. */
+.paywall-legal {
+  text-align: center;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.paywall-legal-link {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--steel-light);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.paywall-legal-sep { color: var(--text-dim); }
 .paywall-buy {
   flex-shrink: 0;
   width: auto;
