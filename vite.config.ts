@@ -19,6 +19,10 @@ export default defineConfig({
       'tauri-plugin-iap-api': fileURLToPath(
         new URL('./src-tauri/plugins/tauri-plugin-iap/guest-js/index.ts', import.meta.url),
       ),
+      // Local push plugin's JS API (APNs/FCM register + open-server event).
+      'tauri-plugin-push-api': fileURLToPath(
+        new URL('./src-tauri/plugins/tauri-plugin-push/guest-js/index.ts', import.meta.url),
+      ),
     },
   },
 

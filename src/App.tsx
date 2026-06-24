@@ -11,6 +11,12 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import type { PluginListener } from '@tauri-apps/api/core';
+import {
+  register as registerPush,
+  onOpenServer as onPushOpenServer,
+  setQuickActions,
+} from 'tauri-plugin-push-api';
 import { LoginScreen } from './components/LoginScreen';
 import { TabBar, type Tab } from './components/TabBar';
 import { ServerListScreen, type ServerStatus } from './components/ServerListScreen';
@@ -27,6 +33,7 @@ import {
   cloudMe,
   cloudOrgsList,
   cloudProcessGrants,
+  cloudPushRegister,
   cloudRelayStart,
   cloudRelayStop,
   cloudServersList,
@@ -178,6 +185,39 @@ function App() {
       cancelled = true;
     };
   }, [state.kind, pendingOpenServer]);
+
+  // Once signed in: (a) register this device for remote push and hand the
+  // token to the cloud, and (b) route a tapped crash push (the native plugin's
+  // `openServer` event) into the same pending-open flow as deep links. Both
+  // are best-effort — registerPush rejects with 'unsupported' on desktop or
+  // 'denied' if the user declines, and neither should disrupt the app.
+  useEffect(() => {
+    if (state.kind !== 'signed-in') return;
+    let cancelled = false;
+    let listener: PluginListener | null = null;
+    void registerPush()
+      // Map device platform → push provider: iOS uses APNs, Android uses FCM.
+      .then((res) => cloudPushRegister(res.platform === 'ios' ? 'apns' : 'fcm', res.token))
+      .catch(() => {
+        /* desktop / permission denied / offline — non-fatal */
+      });
+    // Refresh home-screen Quick Actions from the synced server list (top 4).
+    void cloudServersList()
+      .then((servers) =>
+        setQuickActions(servers.slice(0, 4).map((s) => ({ serverId: s.id, label: s.name }))),
+      )
+      .catch(() => {
+        /* desktop no-op / offline — non-fatal */
+      });
+    void onPushOpenServer((serverId) => setPendingOpenServer(serverId)).then((l) => {
+      if (cancelled) void l.unregister();
+      else listener = l;
+    });
+    return () => {
+      cancelled = true;
+      if (listener) void listener.unregister();
+    };
+  }, [state.kind]);
 
   // Relay lifecycle lives here, at the app root, so the WebSocket
   // survives navigation between the server list, detail and config

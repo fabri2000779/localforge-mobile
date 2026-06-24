@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-set-quick-actions"
+description = "Enables the set_quick_actions command without any pre-configured scope."
+commands.allow = ["set_quick_actions"]
+
+[[permission]]
+identifier = "deny-set-quick-actions"
+description = "Denies the set_quick_actions command without any pre-configured scope."
+commands.deny = ["set_quick_actions"]

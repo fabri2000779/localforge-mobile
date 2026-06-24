@@ -41,6 +41,13 @@ tauri-plugin-opener = "2"
 # is granted.
 tauri-plugin-iap = { path = "plugins/tauri-plugin-iap" }
 
+# Remote push registration — native APNs (iOS) / FCM (Android). Local plugin:
+# thin Rust command surface; the device-token acquisition + notification-tap
+# handling run in the bundled Swift/Kotlin. Desktop preview builds get a stub
+# that returns `unsupported`. The token it returns is registered with the
+# cloud via `cloud_push_register`.
+tauri-plugin-push = { path = "plugins/tauri-plugin-push" }
+
 # In-app OAuth browser — ASWebAuthenticationSession (iOS) / Chrome Custom
 # Tabs (Android). Replaces the external-browser + deep-link round-trip
 # (which cold-started + crashed the app on Android) with an in-app sheet

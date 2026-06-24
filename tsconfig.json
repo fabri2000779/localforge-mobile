@@ -12,7 +12,8 @@
     "noEmit": true,
     "jsx": "react-jsx",
     "paths": {
-      "tauri-plugin-iap-api": ["./src-tauri/plugins/tauri-plugin-iap/guest-js/index.ts"]
+      "tauri-plugin-iap-api": ["./src-tauri/plugins/tauri-plugin-iap/guest-js/index.ts"],
+      "tauri-plugin-push-api": ["./src-tauri/plugins/tauri-plugin-push/guest-js/index.ts"]
     },
     "strict": true,
     "noUnusedLocals": true,
@@ -20,5 +21,5 @@
     "noFallthroughCasesInSwitch": true,
     "verbatimModuleSyntax": true
   },
-  "include": ["src", "vite.config.ts", "src-tauri/plugins/tauri-plugin-iap/guest-js"]
+  "include": ["src", "vite.config.ts", "src-tauri/plugins/tauri-plugin-iap/guest-js", "src-tauri/plugins/tauri-plugin-push/guest-js"]
 }

@@ -1,0 +1,23 @@
+[package]
+name = "tauri-plugin-push"
+version = "0.1.0"
+description = "Remote push registration for LocalForge mobile — APNs (iOS) + FCM (Android)"
+edition = "2021"
+rust-version = "1.77.2"
+# tauri-plugin's build helper requires `links` == the package name (single
+# native link + desktop/mobile cfg wiring). Mirrors tauri-plugin-iap.
+links = "tauri-plugin-push"
+
+# A Tauri 2 mobile plugin. The Rust side is a thin command surface; the actual
+# APNs/FCM registration + notification-tap handling runs in native code (ios/
+# Swift, android/ Kotlin) because the device push token isn't reachable from
+# the WebView. Desktop builds get a stub that returns `unsupported` — the
+# desktop app has no push (it watches its own crash journal directly).
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }

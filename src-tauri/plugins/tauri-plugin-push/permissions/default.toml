@@ -1,0 +1,8 @@
+"$schema" = "schemas/schema.json"
+
+# The mobile app needs the single register command. Nothing security-sensitive
+# to gate — the native side only talks to APNs/FCM, and the cloud is the
+# authority on which token belongs to which user.
+[default]
+description = "Allows registering for push notifications and setting home-screen Quick Actions."
+permissions = ["allow-register", "allow-set-quick-actions"]
