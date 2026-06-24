@@ -89,6 +89,10 @@ function App() {
   // A pending team invitation (from a `localforge://invite` deep link), shown
   // as a top banner until the user accepts or dismisses it.
   const [invite, setInvite] = useState<{ token: string; secret?: string | null } | null>(null);
+  // A server id from a tapped crash push / Quick Action, held until we're
+  // signed in so a cold-start or signed-out tap isn't dropped (a separate
+  // effect resolves + navigates once state becomes 'signed-in').
+  const [pendingOpenServer, setPendingOpenServer] = useState<string | null>(null);
   // Envelope-encryption (sync key) status for the signed-in user, and whether
   // the setup/unlock dialog was dismissed this session. OAuth users have no
   // account password to derive the KEK from, so they MUST set a passphrase here
@@ -128,39 +132,52 @@ function App() {
   }, []);
 
   // A tapped crash push or a home-screen Quick Action deep-links here with a
-  // server id (`cloud://open-server`). Resolve it against the user's synced
-  // inventory and push that server's detail, switching to the Servers tab.
-  // Best-effort: an id we can't resolve (different org / not yet synced) just
-  // lands on the Servers tab.
+  // server id (`cloud://open-server`). We only STASH it here — the resolve +
+  // navigate happens in the effect below once we're signed in, so a tap that
+  // cold-starts the app (state still 'loading') or arrives while signed-out
+  // isn't dropped. The `cancelled` flag closes the listen()-promise teardown
+  // race (cleanup running before the subscribe promise resolves).
   useEffect(() => {
+    let cancelled = false;
     let un: UnlistenFn | null = null;
-    void subscribeOpenServer((serverId) => {
-      void cloudServersList()
-        .then((servers) => {
-          const server = servers.find((s) => s.id === serverId) ?? null;
-          setVisited((v) => (v.has('servers') ? v : new Set(v).add('servers')));
-          setState((s) =>
-            s.kind === 'signed-in'
-              ? {
-                  ...s,
-                  tab: 'servers',
-                  overlay: server ? { kind: 'server', server } : null,
-                }
-              : s,
-          );
-        })
-        .catch(() => {
-          setState((s) =>
-            s.kind === 'signed-in' ? { ...s, tab: 'servers', overlay: null } : s,
-          );
-        });
-    }).then((fn) => {
-      un = fn;
+    void subscribeOpenServer((serverId) => setPendingOpenServer(serverId)).then((fn) => {
+      if (cancelled) fn();
+      else un = fn;
     });
     return () => {
+      cancelled = true;
       if (un) un();
     };
   }, []);
+
+  // Resolve a pending open against the user's synced inventory and push that
+  // server's detail (Servers tab). Runs when a pending id is set AND we're
+  // signed in — covering the cold-start / post-login replay. Best-effort: an
+  // id we can't resolve (different org / not yet synced) just lands on Servers.
+  useEffect(() => {
+    if (state.kind !== 'signed-in' || !pendingOpenServer) return;
+    let cancelled = false;
+    void cloudServersList()
+      .then((servers) => {
+        if (cancelled) return;
+        const server = servers.find((s) => s.id === pendingOpenServer) ?? null;
+        setVisited((v) => (v.has('servers') ? v : new Set(v).add('servers')));
+        setState((s) =>
+          s.kind === 'signed-in'
+            ? { ...s, tab: 'servers', overlay: server ? { kind: 'server', server } : null }
+            : s,
+        );
+        setPendingOpenServer(null);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setState((s) => (s.kind === 'signed-in' ? { ...s, tab: 'servers', overlay: null } : s));
+        setPendingOpenServer(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [state.kind, pendingOpenServer]);
 
   // Relay lifecycle lives here, at the app root, so the WebSocket
   // survives navigation between the server list, detail and config
