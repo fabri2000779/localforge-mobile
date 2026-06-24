@@ -143,6 +143,26 @@ jobs:
           echo "Applied $(ls src-tauri/icons/ios/*.png | wc -l) icons to $DEST"
           ls "$DEST"
 
+      # Push needs the `aps-environment` entitlement in the app's CodeSign
+      # entitlements (the provisioning profile authorises it, but the app must
+      # also DECLARE it, and they must match). `tauri ios init` generates a
+      # default .entitlements without it, so inject it here — production env
+      # (TestFlight + App Store both use production APNs; our cloud sends to
+      # api.push.apple.com). Idempotent: delete-then-add.
+      - name: Add aps-environment (Push) entitlement
+        run: |
+          set -euo pipefail
+          ENT=$(find src-tauri/gen/apple -name '*.entitlements' | head -1)
+          if [ -z "$ENT" ]; then
+            echo "::error::no .entitlements file found under src-tauri/gen/apple"
+            find src-tauri/gen/apple -name '*.entitlements' -o -name '*.plist' | head -20
+            exit 1
+          fi
+          echo "Patching $ENT"
+          /usr/libexec/PlistBuddy -c "Delete :aps-environment" "$ENT" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :aps-environment string production" "$ENT"
+          plutil -p "$ENT"
+
       # ─── Build ───────────────────────────────────────────────────
       - name: Build IPA (signed)
         if: env.IOS_CERTIFICATE_BASE64 != ''
