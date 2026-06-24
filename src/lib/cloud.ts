@@ -394,7 +394,8 @@ export interface BackupEntry {
 export type ScheduleAction =
   | { kind: 'restart' }
   | { kind: 'command'; command: string }
-  | { kind: 'broadcast'; message: string };
+  | { kind: 'broadcast'; message: string }
+  | { kind: 'backup'; targetId?: string; keepLast?: number; maxAgeDays?: number };
 
 export interface Schedule {
   id: string;

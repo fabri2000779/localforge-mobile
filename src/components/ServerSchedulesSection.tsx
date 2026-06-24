@@ -7,7 +7,10 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { Clock, Trash2, RefreshCw, Loader2, Plus } from 'lucide-react';
-import { relayRequest, type Schedule, type ScheduleAction } from '../lib/cloud';
+import {
+  relayRequest, cloudBackupTargetsList,
+  type Schedule, type ScheduleAction, type BackupTargetView,
+} from '../lib/cloud';
 
 const CRON_PRESETS: Array<{ label: string; cron: string }> = [
   { label: 'Every day at 4:00 AM', cron: '0 4 * * *' },
@@ -19,6 +22,7 @@ const CRON_PRESETS: Array<{ label: string; cron: string }> = [
 function describeAction(a: ScheduleAction): string {
   if (a.kind === 'restart') return 'Restart';
   if (a.kind === 'command') return `Command: ${a.command}`;
+  if (a.kind === 'backup') return 'Backup to S3';
   return `Broadcast: ${a.message}`;
 }
 
@@ -41,6 +45,12 @@ export function ServerSchedulesSection({
   const [cron, setCron] = useState(CRON_PRESETS[0]!.cron);
   const [kind, setKind] = useState<ScheduleAction['kind']>('restart');
   const [text, setText] = useState('');
+  // Backup targets for the "backup" action picker (cloud call, decrypted with
+  // the org DEK — works regardless of host online state). null = loading.
+  const [targets, setTargets] = useState<BackupTargetView[] | null>(null);
+  const [targetId, setTargetId] = useState('');
+  const [keepLast, setKeepLast] = useState('7'); // retention floor (blank = no limit)
+  const [maxAgeDays, setMaxAgeDays] = useState(''); // age limit in days (blank = none)
 
   const args = useCallback(
     (extra: Record<string, unknown> = {}) => (nodeId ? { nodeId, ...extra } : extra),
@@ -70,6 +80,22 @@ export function ServerSchedulesSection({
     void refresh();
   }, [refresh]);
 
+  // Load backup targets once so the "backup" action can offer a picker.
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const list = await cloudBackupTargetsList();
+        if (!alive) return;
+        setTargets(list);
+        if (list.length > 0) setTargetId((cur) => cur || list[0]!.id);
+      } catch {
+        if (alive) setTargets([]);
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
+
   const upsert = async (schedule: Schedule, busyKey: string) => {
     setBusy(busyKey);
     setErr(null);
@@ -90,6 +116,16 @@ export function ServerSchedulesSection({
     } else if (kind === 'broadcast') {
       if (!text.trim()) return;
       action = { kind: 'broadcast', message: text.trim() };
+    } else if (kind === 'backup') {
+      if (!targetId) return;
+      const kl = parseInt(keepLast, 10);
+      const ma = parseInt(maxAgeDays, 10);
+      action = {
+        kind: 'backup',
+        targetId,
+        keepLast: Number.isFinite(kl) && kl > 0 ? kl : undefined,
+        maxAgeDays: Number.isFinite(ma) && ma > 0 ? ma : undefined,
+      };
     } else {
       action = { kind: 'restart' };
     }
@@ -196,8 +232,9 @@ export function ServerSchedulesSection({
                 <option value="restart">Restart</option>
                 <option value="broadcast">Broadcast a message</option>
                 <option value="command">Run a console command</option>
+                <option value="backup">Back up to S3</option>
               </select>
-              {kind !== 'restart' && (
+              {(kind === 'command' || kind === 'broadcast') && (
                 <input
                   className="ops-field"
                   placeholder={kind === 'broadcast' ? 'Message to announce' : 'Console command'}
@@ -206,6 +243,31 @@ export function ServerSchedulesSection({
                   autoCapitalize="off"
                   autoCorrect="off"
                 />
+              )}
+              {kind === 'backup' && (
+                targets === null ? (
+                  <p className="ops-muted">Loading backup targets…</p>
+                ) : targets.length === 0 ? (
+                  <p className="ops-error">No S3 backup target yet. Add one under the server’s Backups, then schedule it.</p>
+                ) : (
+                  <>
+                    <select className="ops-field" value={targetId} onChange={(e) => setTargetId(e.target.value)}>
+                      {targets.map((t) => (
+                        <option key={t.id} value={t.id}>{t.name}</option>
+                      ))}
+                    </select>
+                    <input
+                      className="ops-field" type="number" inputMode="numeric" min="0"
+                      placeholder="Keep last (e.g. 7)"
+                      value={keepLast} onChange={(e) => setKeepLast(e.target.value)}
+                    />
+                    <input
+                      className="ops-field" type="number" inputMode="numeric" min="0"
+                      placeholder="Delete older than (days, optional)"
+                      value={maxAgeDays} onChange={(e) => setMaxAgeDays(e.target.value)}
+                    />
+                  </>
+                )
               )}
               <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
                 <button type="button" className="ops-btn" style={{ marginTop: 0 }} onClick={add} disabled={busy === 'create'}>
