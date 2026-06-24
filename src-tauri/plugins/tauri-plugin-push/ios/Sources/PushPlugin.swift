@@ -25,6 +25,7 @@ import Foundation
 import Tauri
 import UIKit
 import UserNotifications
+import WebKit  // WKWebView — the Plugin.load(webview:) override parameter type
 
 class PushPlugin: Plugin, UNUserNotificationCenterDelegate {
     // The in-flight register() call, resolved once APNs hands us a token
