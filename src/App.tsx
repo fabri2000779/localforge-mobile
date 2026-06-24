@@ -29,10 +29,12 @@ import {
   cloudProcessGrants,
   cloudRelayStart,
   cloudRelayStop,
+  cloudServersList,
   cloudSetActiveOrg,
   cloudSyncKeyStatus,
   cloudUnlockOrgDek,
   subscribeInviteReceived,
+  subscribeOpenServer,
   subscribeRelayEvent,
   type Me,
   type OrgSummary,
@@ -118,6 +120,41 @@ function App() {
   useEffect(() => {
     let un: UnlistenFn | null = null;
     void subscribeInviteReceived((p) => setInvite(p)).then((fn) => {
+      un = fn;
+    });
+    return () => {
+      if (un) un();
+    };
+  }, []);
+
+  // A tapped crash push or a home-screen Quick Action deep-links here with a
+  // server id (`cloud://open-server`). Resolve it against the user's synced
+  // inventory and push that server's detail, switching to the Servers tab.
+  // Best-effort: an id we can't resolve (different org / not yet synced) just
+  // lands on the Servers tab.
+  useEffect(() => {
+    let un: UnlistenFn | null = null;
+    void subscribeOpenServer((serverId) => {
+      void cloudServersList()
+        .then((servers) => {
+          const server = servers.find((s) => s.id === serverId) ?? null;
+          setVisited((v) => (v.has('servers') ? v : new Set(v).add('servers')));
+          setState((s) =>
+            s.kind === 'signed-in'
+              ? {
+                  ...s,
+                  tab: 'servers',
+                  overlay: server ? { kind: 'server', server } : null,
+                }
+              : s,
+          );
+        })
+        .catch(() => {
+          setState((s) =>
+            s.kind === 'signed-in' ? { ...s, tab: 'servers', overlay: null } : s,
+          );
+        });
+    }).then((fn) => {
       un = fn;
     });
     return () => {

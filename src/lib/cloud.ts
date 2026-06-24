@@ -337,6 +337,26 @@ export function subscribeRelayEvent(
 }
 
 // ---------------------------------------------------------------------------
+// Push notifications — device-token registration + the "open this server"
+// deep link a tapped crash push (or a home-screen Quick Action) routes through.
+// ---------------------------------------------------------------------------
+
+/** Register this device's native push token with the cloud. Called by the
+ *  native shell once it has an APNs (iOS) / FCM (Android) token. */
+export function cloudPushRegister(platform: 'apns' | 'fcm', token: string): Promise<void> {
+  return invoke('cloud_push_register', { platform, token });
+}
+
+/** Fires when a crash push or Quick Action asks the app to open a server (by
+ *  id). The handler resolves it to a synced server and navigates. */
+export function subscribeOpenServer(handler: (serverId: string) => void): Promise<UnlistenFn> {
+  return listen<{ serverId?: string }>('cloud://open-server', (e) => {
+    const id = e.payload?.serverId;
+    if (id) handler(id);
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Org backup targets — named list, stored encrypted-with-DEK in the cloud.
 // ---------------------------------------------------------------------------
 

@@ -111,6 +111,16 @@ pub async fn handle_deep_link(app: AppHandle, url: String) {
         handle_invite(app, url).await;
         return;
     }
+    // `localforge://server?id=<serverId>` — opened by a tapped crash push or a
+    // home-screen Quick Action (the native shell builds this URL from the push
+    // payload / shortcut). We surface the id to React as `cloud://open-server`;
+    // the app resolves it to a synced server and pushes its detail screen.
+    if url.starts_with("localforge://server") {
+        if let Some(id) = shared::parse_query_param(&url, "id") {
+            let _ = app.emit("cloud://open-server", serde_json::json!({ "serverId": id }));
+        }
+        return;
+    }
     tracing::debug!(url, "deep-link ignored — no handler matches");
 }
 

@@ -9,6 +9,7 @@ mod iap;
 mod nodes;
 mod oauth;
 mod orgs;
+mod push;
 mod relay;
 mod sync;
 mod vault;
@@ -80,6 +81,7 @@ pub fn run() {
             relay::cloud_relay_start,
             relay::cloud_relay_stop,
             relay::cloud_relay_send_cmd,
+            push::cloud_push_register,
             iap::cloud_iap_verify_apple,
             iap::cloud_iap_verify_google,
             iap::open_manage_subscriptions,
