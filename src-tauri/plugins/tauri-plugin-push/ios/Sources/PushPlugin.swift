@@ -114,12 +114,14 @@ class PushPlugin: Plugin, UNUserNotificationCenterDelegate {
               let srv = lf["srv"] as? String,
               !srv.isEmpty
         else { return }
-        var data: [String: Any] = ["serverId": srv]
+        // `trigger` takes JSObject ([String: JSValue]) — a [String: Any] var
+        // doesn't coerce and broke the v0.3.21 build ("ambiguous without a
+        // type annotation"). String conforms to JSValue, so type it directly.
+        var data: JSObject = ["serverId": srv]
         // Org context rides along so the app can switch orgs before resolving.
         if let org = lf["org"] as? String, !org.isEmpty {
             data["orgId"] = org
         }
-        // VERIFY: event-emit API name on device.
         trigger("openServer", data: data)
     }
 
