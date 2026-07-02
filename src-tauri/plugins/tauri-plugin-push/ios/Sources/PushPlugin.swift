@@ -114,8 +114,13 @@ class PushPlugin: Plugin, UNUserNotificationCenterDelegate {
               let srv = lf["srv"] as? String,
               !srv.isEmpty
         else { return }
+        var data: [String: Any] = ["serverId": srv]
+        // Org context rides along so the app can switch orgs before resolving.
+        if let org = lf["org"] as? String, !org.isEmpty {
+            data["orgId"] = org
+        }
         // VERIFY: event-emit API name on device.
-        trigger("openServer", data: ["serverId": srv])
+        trigger("openServer", data: data)
     }
 
     // MARK: - Quick Actions (home-screen shortcuts)

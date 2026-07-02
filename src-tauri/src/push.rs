@@ -26,6 +26,11 @@ struct RegisterBody<'a> {
     token: &'a str,
 }
 
+#[derive(serde::Serialize)]
+struct UnregisterBody<'a> {
+    token: &'a str,
+}
+
 /// Register this device's push token with the cloud. `platform` is "apns"
 /// (iOS) or "fcm" (Android); `token` is the opaque device token the OS handed
 /// the native layer. Idempotent server-side (the token is the primary key, so
@@ -43,6 +48,23 @@ pub async fn cloud_push_register(
             platform: &platform,
             token: &token,
         },
+        Some(&session),
+    )
+    .await?;
+    Ok(())
+}
+
+/// Drop this device's push token from the cloud (sign-out / opt-out). Must be
+/// called while the session is still valid — i.e. BEFORE `cloud_logout`.
+/// Best-effort semantics server-side: deleting an unknown token is a no-op.
+/// (POST variant of the unregister endpoint — the shared api layer has no
+/// DELETE-with-body.)
+#[tauri::command]
+pub async fn cloud_push_unregister(app: tauri::AppHandle, token: String) -> Result<(), ApiError> {
+    let session = crate::auth::load_token(&app).ok_or_else(unauth)?;
+    let _: serde_json::Value = api::post(
+        "/v1/push/unregister",
+        &UnregisterBody { token: &token },
         Some(&session),
     )
     .await?;

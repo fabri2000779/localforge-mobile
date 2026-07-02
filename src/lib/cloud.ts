@@ -341,18 +341,35 @@ export function subscribeRelayEvent(
 // deep link a tapped crash push (or a home-screen Quick Action) routes through.
 // ---------------------------------------------------------------------------
 
+// The token this device registered, remembered so sign-out can revoke exactly
+// it (the cloud's push_tokens row) while the session is still valid.
+let registeredPushToken: string | null = null;
+
 /** Register this device's native push token with the cloud. Called by the
  *  native shell once it has an APNs (iOS) / FCM (Android) token. */
 export function cloudPushRegister(platform: 'apns' | 'fcm', token: string): Promise<void> {
+  registeredPushToken = token;
   return invoke('cloud_push_register', { platform, token });
 }
 
+/** Drop this device's push token from the cloud. Call BEFORE `cloudLogout`
+ *  (needs the still-valid session). No-op if we never registered one. */
+export async function cloudPushUnregister(): Promise<void> {
+  const token = registeredPushToken;
+  if (!token) return;
+  registeredPushToken = null;
+  await invoke('cloud_push_unregister', { token });
+}
+
 /** Fires when a crash push or Quick Action asks the app to open a server (by
- *  id). The handler resolves it to a synced server and navigates. */
-export function subscribeOpenServer(handler: (serverId: string) => void): Promise<UnlistenFn> {
-  return listen<{ serverId?: string }>('cloud://open-server', (e) => {
+ *  id, plus the originating org id when it differs from the active org). The
+ *  handler resolves it to a synced server and navigates. */
+export function subscribeOpenServer(
+  handler: (serverId: string, orgId?: string | null) => void,
+): Promise<UnlistenFn> {
+  return listen<{ serverId?: string; orgId?: string | null }>('cloud://open-server', (e) => {
     const id = e.payload?.serverId;
-    if (id) handler(id);
+    if (id) handler(id, e.payload?.orgId ?? null);
   });
 }
 

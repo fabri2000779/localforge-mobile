@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import {
   cloudLogout,
+  cloudPushUnregister,
   cloudDeleteAccount,
   openManageSubscriptions,
   cloudOrgsAcceptInvite,
@@ -68,6 +69,11 @@ export function AccountScreen({
   async function logout() {
     setLoggingOut(true);
     try {
+      // Revoke this device's push token first — it needs the still-valid
+      // session, and a signed-out device must stop receiving crash pushes.
+      await cloudPushUnregister().catch(() => {
+        /* best-effort — never block sign-out */
+      });
       await cloudLogout();
     } finally {
       onSignedOut();

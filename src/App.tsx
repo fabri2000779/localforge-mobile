@@ -96,10 +96,20 @@ function App() {
   // A pending team invitation (from a `localforge://invite` deep link), shown
   // as a top banner until the user accepts or dismisses it.
   const [invite, setInvite] = useState<{ token: string; secret?: string | null } | null>(null);
-  // A server id from a tapped crash push / Quick Action, held until we're
-  // signed in so a cold-start or signed-out tap isn't dropped (a separate
-  // effect resolves + navigates once state becomes 'signed-in').
-  const [pendingOpenServer, setPendingOpenServer] = useState<string | null>(null);
+  // A server (id + optional originating org) from a tapped crash push /
+  // Quick Action, held until we're signed in so a cold-start or signed-out
+  // tap isn't dropped (a separate effect resolves + navigates once state
+  // becomes 'signed-in', switching orgs first when the push crossed orgs).
+  const [pendingOpenServer, setPendingOpenServer] = useState<{
+    id: string;
+    orgId: string | null;
+  } | null>(null);
+  // Guards the cross-org switch so each pending open only attempts it once.
+  const pendingSwitchTriedRef = useRef(false);
+  // Assigned every render once `switchOrg` (declared further down) exists —
+  // the resolve effect sits above that declaration and referencing the const
+  // directly from its deps would TDZ-crash on first render.
+  const switchOrgRef = useRef<((orgId: string | null) => Promise<void>) | null>(null);
   // Envelope-encryption (sync key) status for the signed-in user, and whether
   // the setup/unlock dialog was dismissed this session. OAuth users have no
   // account password to derive the KEK from, so they MUST set a passphrase here
@@ -147,7 +157,10 @@ function App() {
   useEffect(() => {
     let cancelled = false;
     let un: UnlistenFn | null = null;
-    void subscribeOpenServer((serverId) => setPendingOpenServer(serverId)).then((fn) => {
+    void subscribeOpenServer((serverId, orgId) => {
+      pendingSwitchTriedRef.current = false;
+      setPendingOpenServer({ id: serverId, orgId: orgId ?? null });
+    }).then((fn) => {
       if (cancelled) fn();
       else un = fn;
     });
@@ -159,32 +172,49 @@ function App() {
 
   // Resolve a pending open against the user's synced inventory and push that
   // server's detail (Servers tab). Runs when a pending id is set AND we're
-  // signed in — covering the cold-start / post-login replay. Best-effort: an
-  // id we can't resolve (different org / not yet synced) just lands on Servers.
+  // signed in — covering the cold-start / post-login replay. If the push came
+  // from a DIFFERENT org we belong to, switch the active org first (tried at
+  // most once per pending open); the activeOrgId flip re-runs this effect
+  // into the resolve branch. Best-effort: an id we can't resolve (org we
+  // left / not yet synced) just lands on Servers.
   useEffect(() => {
     if (state.kind !== 'signed-in' || !pendingOpenServer) return;
     let cancelled = false;
+    const { id, orgId } = pendingOpenServer;
+    const own = orgs.find((o) => o.isOwner);
+    const currentOrgId = activeOrgId ?? own?.id ?? null;
+    const target =
+      orgId && orgId !== currentOrgId ? orgs.find((o) => o.id === orgId) : undefined;
+    if (target && !pendingSwitchTriedRef.current && switchOrgRef.current) {
+      pendingSwitchTriedRef.current = true;
+      // switchOrg never rejects (it catches each step internally) and always
+      // ends by flipping activeOrgId — which re-runs this effect to resolve.
+      void switchOrgRef.current(target.isOwner ? null : target.id);
+      return;
+    }
     void cloudServersList()
       .then((servers) => {
         if (cancelled) return;
-        const server = servers.find((s) => s.id === pendingOpenServer) ?? null;
+        const server = servers.find((s) => s.id === id) ?? null;
         setVisited((v) => (v.has('servers') ? v : new Set(v).add('servers')));
         setState((s) =>
           s.kind === 'signed-in'
             ? { ...s, tab: 'servers', overlay: server ? { kind: 'server', server } : null }
             : s,
         );
+        pendingSwitchTriedRef.current = false;
         setPendingOpenServer(null);
       })
       .catch(() => {
         if (cancelled) return;
         setState((s) => (s.kind === 'signed-in' ? { ...s, tab: 'servers', overlay: null } : s));
+        pendingSwitchTriedRef.current = false;
         setPendingOpenServer(null);
       });
     return () => {
       cancelled = true;
     };
-  }, [state.kind, pendingOpenServer]);
+  }, [state.kind, pendingOpenServer, activeOrgId, orgs]);
 
   // Once signed in: (a) register this device for remote push and hand the
   // token to the cloud, and (b) route a tapped crash push (the native plugin's
@@ -209,7 +239,10 @@ function App() {
       .catch(() => {
         /* desktop no-op / offline — non-fatal */
       });
-    void onPushOpenServer((serverId) => setPendingOpenServer(serverId)).then((l) => {
+    void onPushOpenServer((serverId, orgId) => {
+      pendingSwitchTriedRef.current = false;
+      setPendingOpenServer({ id: serverId, orgId: orgId ?? null });
+    }).then((l) => {
       if (cancelled) void l.unregister();
       else listener = l;
     });
@@ -396,6 +429,9 @@ function App() {
     }
     setActiveOrgId(orgId);
   }, [orgs]);
+  // Expose to the pending-open resolve effect above (declared before this
+  // const exists — see the ref's comment).
+  switchOrgRef.current = switchOrg;
 
   // After accepting an invite: refresh the org list, switch to the joined org
   // (which unlocks its DEK), and land on the Servers tab.

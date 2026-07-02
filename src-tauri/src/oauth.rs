@@ -117,7 +117,14 @@ pub async fn handle_deep_link(app: AppHandle, url: String) {
     // the app resolves it to a synced server and pushes its detail screen.
     if url.starts_with("localforge://server") {
         if let Some(id) = shared::parse_query_param(&url, "id") {
-            let _ = app.emit("cloud://open-server", serde_json::json!({ "serverId": id }));
+            // Optional org context: a cross-org crash push carries the org id
+            // so the app can switch to the right org before resolving the
+            // server. Quick Actions omit it (they're from the active org).
+            let org = shared::parse_query_param(&url, "org");
+            let _ = app.emit(
+                "cloud://open-server",
+                serde_json::json!({ "serverId": id, "orgId": org }),
+            );
         }
         return;
     }

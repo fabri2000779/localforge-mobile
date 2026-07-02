@@ -23,14 +23,19 @@ export async function register(): Promise<RegisterResult> {
 }
 
 /** Fires when a crash push (or home-screen Quick Action) is tapped — the
- *  payload carries the opaque server id. The app resolves it to a synced
- *  server and deep-links to it. */
+ *  payload carries the opaque server id, plus the org id when the push came
+ *  from a different org than the active one (the app switches first). The app
+ *  resolves the id to a synced server and deep-links to it. */
 export async function onOpenServer(
-  handler: (serverId: string) => void,
+  handler: (serverId: string, orgId?: string | null) => void,
 ): Promise<PluginListener> {
-  return addPluginListener('push', 'openServer', (e: { serverId?: string }) => {
-    if (e?.serverId) handler(e.serverId);
-  });
+  return addPluginListener(
+    'push',
+    'openServer',
+    (e: { serverId?: string; orgId?: string | null }) => {
+      if (e?.serverId) handler(e.serverId, e.orgId ?? null);
+    },
+  );
 }
 
 export interface QuickAction {

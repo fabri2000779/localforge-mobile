@@ -95,6 +95,8 @@ class PushPlugin(private val activity: Activity) : Plugin(activity) {
         if (srv.isEmpty()) return
         val data = JSObject()
         data.put("serverId", srv)
+        // Org context rides along so the app can switch orgs before resolving.
+        intent.getStringExtra("org")?.let { if (it.isNotEmpty()) data.put("orgId", it) }
         // VERIFY: event-emit API name on device.
         trigger("openServer", data)
     }

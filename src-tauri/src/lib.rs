@@ -83,6 +83,7 @@ pub fn run() {
             relay::cloud_relay_stop,
             relay::cloud_relay_send_cmd,
             push::cloud_push_register,
+            push::cloud_push_unregister,
             iap::cloud_iap_verify_apple,
             iap::cloud_iap_verify_google,
             iap::open_manage_subscriptions,
