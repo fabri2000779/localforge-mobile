@@ -61,6 +61,7 @@ pub fn run() {
             auth::cloud_delete_account,
             auth::cloud_request_password_reset,
             oauth::cloud_oauth_start,
+            oauth::deep_link_replay,
             sync::cloud_servers_list,
             sync::cloud_server_config,
             nodes::cloud_list_machines,

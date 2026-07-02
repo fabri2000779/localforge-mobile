@@ -10,7 +10,7 @@
  * That machine id lets us label + group + filter, and route inline
  * start/stop straight to the right executor.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ChevronRight,
   Cloud,
@@ -80,6 +80,13 @@ export function ServerListScreen({ me, onlineNodeIds, desktopOnline, embedded, o
   const [state, setState] = useState<State>(isPaid ? { kind: 'loading' } : { kind: 'paywalled' });
   const [refreshing, setRefreshing] = useState(false);
   const [statuses, setStatuses] = useState<Map<string, ServerStatus>>(new Map());
+  // In-flight inline actions (request_id → what to revert to). Lets the
+  // cmd_result handler roll back the optimistic status + surface the error —
+  // failures used to leave the row on 'Starting…' forever (audit finding).
+  const pendingCmdsRef = useRef<Map<string, { serverId: string; prev: ServerStatus | undefined }>>(
+    new Map(),
+  );
+  const [actionErr, setActionErr] = useState<string | null>(null);
   /** Servers discovered live on a machine, keyed by machineId (the disc
    *  request_id). Includes desktops + agents now. */
   const [nodeServers, setNodeServers] = useState<Map<string, ServerSummary[]>>(new Map());
@@ -119,6 +126,22 @@ export function ServerListScreen({ me, onlineNodeIds, desktopOnline, embedded, o
           for (const s of servers) if (s?.id) next.set(s.id, s.status ?? 'unknown');
           return next;
         });
+        return;
+      }
+      if (msg.kind === 'cmd_result' && typeof msg.request_id === 'string') {
+        const pending = pendingCmdsRef.current.get(msg.request_id);
+        if (pending) {
+          pendingCmdsRef.current.delete(msg.request_id);
+          if (msg.success === false) {
+            setStatuses((prev) => {
+              const next = new Map(prev);
+              if (pending.prev === undefined) next.delete(pending.serverId);
+              else next.set(pending.serverId, pending.prev);
+              return next;
+            });
+            setActionErr(typeof msg.error === 'string' ? msg.error : 'Command failed on the host');
+          }
+        }
         return;
       }
       if (msg.kind === 'server.state_changed' && typeof msg.target === 'string') {
@@ -252,17 +275,32 @@ export function ServerListScreen({ me, onlineNodeIds, desktopOnline, embedded, o
 
   function sendAction(server: ServerSummary, action: 'start' | 'stop') {
     const nodeId = machineOf(server) ?? 'local';
+    const requestId = crypto.randomUUID();
+    const prev = statuses.get(server.id);
+    pendingCmdsRef.current.set(requestId, { serverId: server.id, prev });
+    setActionErr(null);
     void cloudRelaySendCmd({
       type: 'cmd',
       cmd: `server.${action}`,
-      request_id: crypto.randomUUID(),
+      request_id: requestId,
       target: server.id,
       args: { nodeId },
-    }).catch(() => {});
+    }).catch(() => {
+      // Couldn't even reach the relay — revert the optimistic status and say
+      // so (it used to fail silently; audit finding).
+      pendingCmdsRef.current.delete(requestId);
+      setStatuses((prevMap) => {
+        const next = new Map(prevMap);
+        if (prev === undefined) next.delete(server.id);
+        else next.set(server.id, prev);
+        return next;
+      });
+      setActionErr("Couldn't reach the relay — check your connection.");
+    });
     // Optimistic: reflect the transition immediately; the real status
-    // arrives via server.state_changed.
-    setStatuses((prev) => {
-      const next = new Map(prev);
+    // arrives via server.state_changed (or cmd_result reverts it).
+    setStatuses((prevMap) => {
+      const next = new Map(prevMap);
       next.set(server.id, action === 'start' ? 'starting' : 'stopping');
       return next;
     });
@@ -296,6 +334,12 @@ export function ServerListScreen({ me, onlineNodeIds, desktopOnline, embedded, o
           </button>
         )}
       </header>
+
+      {actionErr && (
+        <div role="alert" style={{ color: '#fca5a5', fontSize: 13, padding: '6px 16px' }}>
+          {actionErr}
+        </div>
+      )}
 
       {state.kind === 'loading' && <ListLoading />}
       {state.kind === 'paywalled' && <Paywall plan={me.subscription.plan} onUpgraded={handleUpgraded} />}

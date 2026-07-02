@@ -353,12 +353,20 @@ export function cloudPushRegister(platform: 'apns' | 'fcm', token: string): Prom
 }
 
 /** Drop this device's push token from the cloud. Call BEFORE `cloudLogout`
- *  (needs the still-valid session). No-op if we never registered one. */
+ *  (needs the still-valid session). Rust falls back to the token it persisted
+ *  at registration, so this works even when the app was restarted since (the
+ *  module variable here dies with the process; audit finding). */
 export async function cloudPushUnregister(): Promise<void> {
   const token = registeredPushToken;
-  if (!token) return;
   registeredPushToken = null;
-  await invoke('cloud_push_unregister', { token });
+  await invoke('cloud_push_unregister', { token: token ?? null });
+}
+
+/** Replay the deep link the app was cold-launched with (the Rust-side
+ *  on_open_url fires before the webview's listeners exist). Call once, right
+ *  after the open-server/invite subscriptions are registered. */
+export function deepLinkReplay(): Promise<void> {
+  return invoke('deep_link_replay');
 }
 
 /** Fires when a crash push or Quick Action asks the app to open a server (by

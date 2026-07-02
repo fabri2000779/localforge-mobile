@@ -40,6 +40,7 @@ import {
   cloudSetActiveOrg,
   cloudSyncKeyStatus,
   cloudUnlockOrgDek,
+  deepLinkReplay,
   subscribeInviteReceived,
   subscribeOpenServer,
   subscribeRelayEvent,
@@ -92,6 +93,10 @@ function App() {
   // `null` means their own primary org. Drives the X-LocalForge-Org header +
   // which org the relay connects to.
   const [orgs, setOrgs] = useState<OrgSummary[]>([]);
+  // Distinguishes "org list not fetched yet" from "no orgs" — a cross-org
+  // push resolve must WAIT for the list instead of consuming the pending
+  // open against an empty array (audit finding).
+  const [orgsLoaded, setOrgsLoaded] = useState(false);
   const [activeOrgId, setActiveOrgId] = useState<string | null>(null);
   // A pending team invitation (from a `localforge://invite` deep link), shown
   // as a top banner until the user accepts or dismisses it.
@@ -135,6 +140,38 @@ function App() {
       });
   }, []);
 
+  // OAuth can persist the token but fail the follow-up /me on a network blip —
+  // Rust emits `cloud://signed-in-partial` and NOTHING listened, so the login
+  // screen hung despite a valid session (audit finding). Retry /me with
+  // backoff and complete the sign-in.
+  useEffect(() => {
+    let cancelled = false;
+    let un: UnlistenFn | null = null;
+    void listen('cloud://signed-in-partial', () => {
+      void (async () => {
+        for (let i = 0; i < 3 && !cancelled; i++) {
+          await new Promise((r) => setTimeout(r, 1500 * (i + 1)));
+          try {
+            const me = await cloudMe();
+            if (me && !cancelled) {
+              setState({ kind: 'signed-in', me, tab: 'servers', overlay: null });
+              return;
+            }
+          } catch {
+            /* transient — retry */
+          }
+        }
+      })();
+    }).then((fn) => {
+      if (cancelled) fn();
+      else un = fn;
+    });
+    return () => {
+      cancelled = true;
+      if (un) un();
+    };
+  }, []);
+
   // Listen for invitation deep links at the app root (any state), so tapping
   // an invite link surfaces the accept banner even before sign-in. Persists
   // until the user accepts or dismisses.
@@ -162,7 +199,13 @@ function App() {
       setPendingOpenServer({ id: serverId, orgId: orgId ?? null });
     }).then((fn) => {
       if (cancelled) fn();
-      else un = fn;
+      else {
+        un = fn;
+        // Replay the cold-launch deep link now that the listener exists —
+        // Rust's on_open_url fires before the webview subscribes, so a link
+        // that LAUNCHED the app was silently dropped (audit finding).
+        void deepLinkReplay().catch(() => {});
+      }
     });
     return () => {
       cancelled = true;
@@ -181,6 +224,10 @@ function App() {
     if (state.kind !== 'signed-in' || !pendingOpenServer) return;
     let cancelled = false;
     const { id, orgId } = pendingOpenServer;
+    // A cross-org open can't be routed until the org list has loaded — bail
+    // WITHOUT consuming the pending open; the orgsLoaded flip re-runs this
+    // effect (audit finding: the resolve raced the org fetch and gave up).
+    if (orgId && !orgsLoaded) return;
     const own = orgs.find((o) => o.isOwner);
     const currentOrgId = activeOrgId ?? own?.id ?? null;
     const target =
@@ -214,7 +261,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [state.kind, pendingOpenServer, activeOrgId, orgs]);
+  }, [state.kind, pendingOpenServer, activeOrgId, orgs, orgsLoaded]);
 
   // Once signed in: (a) register this device for remote push and hand the
   // token to the cloud, and (b) route a tapped crash push (the native plugin's
@@ -231,7 +278,27 @@ function App() {
       .catch(() => {
         /* desktop / permission denied / offline — non-fatal */
       });
-    // Refresh home-screen Quick Actions from the synced server list (top 4).
+    void onPushOpenServer((serverId, orgId) => {
+      pendingSwitchTriedRef.current = false;
+      setPendingOpenServer({ id: serverId, orgId: orgId ?? null });
+    })
+      .then((l) => {
+        if (cancelled) void l.unregister();
+        else listener = l;
+      })
+      .catch(() => {
+        /* desktop preview: no plugin event channel — non-fatal */
+      });
+    return () => {
+      cancelled = true;
+      if (listener) void listener.unregister();
+    };
+  }, [state.kind]);
+
+  // Refresh home-screen Quick Actions from the ACTIVE org's synced servers
+  // (top 4) — they went stale after an org switch (audit finding).
+  useEffect(() => {
+    if (state.kind !== 'signed-in') return;
     void cloudServersList()
       .then((servers) =>
         setQuickActions(servers.slice(0, 4).map((s) => ({ serverId: s.id, label: s.name }))),
@@ -239,17 +306,15 @@ function App() {
       .catch(() => {
         /* desktop no-op / offline — non-fatal */
       });
-    void onPushOpenServer((serverId, orgId) => {
-      pendingSwitchTriedRef.current = false;
-      setPendingOpenServer({ id: serverId, orgId: orgId ?? null });
-    }).then((l) => {
-      if (cancelled) void l.unregister();
-      else listener = l;
-    });
-    return () => {
-      cancelled = true;
-      if (listener) void listener.unregister();
-    };
+  }, [state.kind, activeOrgId]);
+
+  // Sign-out hygiene: wipe Quick Actions (they'd keep the previous account's
+  // server names on the home screen) + any pending open (audit finding).
+  useEffect(() => {
+    if (state.kind !== 'signed-out') return;
+    setPendingOpenServer(null);
+    pendingSwitchTriedRef.current = false;
+    void setQuickActions([]).catch(() => {});
   }, [state.kind]);
 
   // Relay lifecycle lives here, at the app root, so the WebSocket
@@ -272,10 +337,15 @@ function App() {
   useEffect(() => {
     if (!signedInId) {
       setOrgs([]);
+      setOrgsLoaded(false);
       setActiveOrgId(null);
       return;
     }
-    void cloudOrgsList().then(setOrgs).catch(() => setOrgs([]));
+    setOrgsLoaded(false);
+    void cloudOrgsList()
+      .then(setOrgs)
+      .catch(() => setOrgs([]))
+      .finally(() => setOrgsLoaded(true));
   }, [signedInId]);
 
   // Sync-key status follows the signed-in user; re-checked after a successful
@@ -295,11 +365,21 @@ function App() {
 
   useEffect(() => {
     if (!relayUserId) return;
+    let cancelled = false;
     // Point HTTP (X-LocalForge-Org) AND the relay at the active org before
     // connecting, so a sub-user observes the OWNER's org. Re-runs on switch.
-    void cloudSetActiveOrg(activeOrgId).catch(() => {});
-    void cloudRelayStart(activeOrgId).catch((e) => console.warn('relay start failed', e));
+    // SEQUENCED stop → header → start: these were three un-awaited calls, so
+    // on an org switch the previous effect's async stop could land AFTER the
+    // new start and kill the fresh connection with no retry (audit finding).
+    void (async () => {
+      await cloudRelayStop().catch(() => {});
+      if (cancelled) return;
+      await cloudSetActiveOrg(activeOrgId).catch(() => {});
+      if (cancelled) return;
+      await cloudRelayStart(activeOrgId).catch((e) => console.warn('relay start failed', e));
+    })();
     return () => {
+      cancelled = true;
       void cloudRelayStop();
     };
   }, [relayUserId, activeOrgId]);
@@ -310,6 +390,7 @@ function App() {
   // op re-derives it (rather than re-sealing the stale one over the new grants).
   useEffect(() => {
     if (!relayUserId) return;
+    let cancelled = false;
     let un: UnlistenFn | null = null;
     void subscribeRelayEvent((msg) => {
       if (msg?.kind !== 'dek_rotated') return;
@@ -320,8 +401,17 @@ function App() {
       } else if (activeOrgId) {
         void cloudUnlockOrgDek(activeOrgId).catch(() => {});
       }
-    }).then((fn) => { un = fn; });
-    return () => { if (un) un(); };
+    }).then((fn) => {
+      // Cancellation guard — this effect's deps change in normal use (org
+      // switch), and without it a cleanup racing the listen() promise leaked
+      // a duplicate listener (audit finding).
+      if (cancelled) fn();
+      else un = fn;
+    });
+    return () => {
+      cancelled = true;
+      if (un) un();
+    };
   }, [relayUserId, activeOrgId, orgs]);
 
   // Track which executors are on the relay, from the `hello` peer list +

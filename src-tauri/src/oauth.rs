@@ -131,6 +131,30 @@ pub async fn handle_deep_link(app: AppHandle, url: String) {
     tracing::debug!(url, "deep-link ignored — no handler matches");
 }
 
+/// Replay the deep link the app was COLD-LAUNCHED with. `on_open_url` only
+/// covers links that arrive while the app runs — a link that LAUNCHES it is
+/// emitted before the webview's listeners exist, silently dropping the intent
+/// (audit finding: Android shortcut / invite taps lost at cold start). React
+/// calls this once, right after its listeners are registered.
+#[cfg(any(target_os = "android", target_os = "ios"))]
+#[tauri::command]
+pub async fn deep_link_replay(app: AppHandle) -> Result<(), String> {
+    use tauri_plugin_deep_link::DeepLinkExt;
+    if let Ok(Some(urls)) = app.deep_link().get_current() {
+        for url in urls {
+            handle_deep_link(app.clone(), url.to_string()).await;
+        }
+    }
+    Ok(())
+}
+
+/// Desktop preview stub — no cold-start deep-link path exists there.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[tauri::command]
+pub async fn deep_link_replay() -> Result<(), String> {
+    Ok(())
+}
+
 #[cfg(any(target_os = "android", target_os = "ios"))]
 async fn handle_auth_callback(app: AppHandle, url: String) {
     let Some(token) = shared::parse_callback_token(&url) else {
