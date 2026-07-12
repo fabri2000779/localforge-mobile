@@ -135,13 +135,15 @@ pub async fn cloud_sync_key_setup(app: tauri::AppHandle, secret: String) -> Resu
         });
     };
     // Reuse a local DEK if we somehow already have one, else mint a fresh one.
-    let dek = match load_dek(&app) {
-        Some(k) => k,
-        None => {
-            let k = crypto::generate_key();
-            save_dek(&app, &k).map_err(|e| ApiError::Decode(format!("dek store: {e}")))?;
-            k
-        }
+    // A freshly-minted DEK is NOT persisted until the POST below succeeds:
+    // saving it first meant that if the POST failed (409 because another device
+    // already set the sync key, or a network drop) a random DEK stayed on disk
+    // that didn't match the server's wrapped_dek — status then reported
+    // "unlocked" and every decrypt failed forever with no way to re-prompt
+    // (audit finding).
+    let (dek, freshly_generated) = match load_dek(&app) {
+        Some(k) => (k, false),
+        None => (crypto::generate_key(), true),
     };
     let salt = crypto::generate_salt();
     let kek = crypto::derive_kek(&secret, &salt).map_err(ApiError::Decode)?;
@@ -163,6 +165,11 @@ pub async fn cloud_sync_key_setup(app: tauri::AppHandle, secret: String) -> Resu
     };
     let _: serde_json::Value =
         localforge_cloud_client::api::post("/v1/account/sync-key", &body, Some(&token)).await?;
+    // POST succeeded — NOW persist the fresh DEK, so on-disk state can never
+    // disagree with the server's wrap.
+    if freshly_generated {
+        save_dek(&app, &dek).map_err(|e| ApiError::Decode(format!("dek store: {e}")))?;
+    }
     // Establish + publish the keypair so the user can receive org grants.
     let _ = ensure_keypair(&app, &kek, &token).await;
     Ok(())
@@ -235,15 +242,39 @@ pub async fn ensure_keypair(
     kek: &[u8; KEY_LEN],
     token: &str,
 ) -> Result<(), ApiError> {
-    if load_x25519_sk(app).is_some() {
+    let local_sk = load_x25519_sk(app);
+    let me = auth::fetch_me(token).await?;
+
+    if let Some(sk) = local_sk {
+        // We hold the secret. Make sure the cloud's KEK-wrapped copy is wrapped
+        // with the CURRENT KEK: after a passphrase rotation the wrap is stale,
+        // and a DIFFERENT device unlocking with the new passphrase then failed to
+        // unwrap it and minted a FRESH keypair — overwriting the published pubkey
+        // and orphaning every existing grant, locking the member out (audit
+        // finding). Re-publishing the SAME pubkey with a freshly-wrapped secret
+        // keeps grants valid.
+        let needs_rewrap = match &me.wrapped_x25519_sk {
+            Some(w) => crypto::unwrap_dek(kek, w).is_err(),
+            None => true,
+        };
+        if needs_rewrap {
+            let pk = crypto::public_from_secret(&sk);
+            let wrapped_sk = crypto::wrap_dek(kek, &sk).map_err(ApiError::Decode)?;
+            let pk_b64 = base64::engine::general_purpose::STANDARD.encode(pk);
+            localforge_cloud_client::keys::publish_pubkey(&pk_b64, &wrapped_sk, token).await?;
+        }
         return Ok(());
     }
-    let me = auth::fetch_me(token).await?;
+
+    // No local secret — recover the published one if it unwraps.
     if let Some(wrapped) = me.wrapped_x25519_sk {
         if let Ok(sk) = crypto::unwrap_dek(kek, &wrapped) {
             save_x25519_sk(app, &sk).map_err(|e| ApiError::Decode(format!("x25519: {e}")))?;
             return Ok(());
         }
+        // Wrapped present but won't unwrap. Rare now that rotation re-wraps
+        // above; the owner's process_grants re-seals us once cloud_unlock_org_dek
+        // / pending_grants notices the pubkey changed.
     }
     let (sk, pk) = crypto::generate_keypair();
     let wrapped_sk = crypto::wrap_dek(kek, &sk).map_err(ApiError::Decode)?;

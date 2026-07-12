@@ -2415,6 +2415,48 @@
           "markdownDescription": "Denies the unregister command without any pre-configured scope."
         },
         {
+          "description": "Allows the app to drive the native iOS tab bar.\n#### This default permission set includes:\n\n- `allow-show-bar`\n- `allow-set-selected`\n- `allow-hide-bar`",
+          "type": "string",
+          "const": "glasstabbar:default",
+          "markdownDescription": "Allows the app to drive the native iOS tab bar.\n#### This default permission set includes:\n\n- `allow-show-bar`\n- `allow-set-selected`\n- `allow-hide-bar`"
+        },
+        {
+          "description": "Enables the hide_bar command without any pre-configured scope.",
+          "type": "string",
+          "const": "glasstabbar:allow-hide-bar",
+          "markdownDescription": "Enables the hide_bar command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_selected command without any pre-configured scope.",
+          "type": "string",
+          "const": "glasstabbar:allow-set-selected",
+          "markdownDescription": "Enables the set_selected command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the show_bar command without any pre-configured scope.",
+          "type": "string",
+          "const": "glasstabbar:allow-show-bar",
+          "markdownDescription": "Enables the show_bar command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the hide_bar command without any pre-configured scope.",
+          "type": "string",
+          "const": "glasstabbar:deny-hide-bar",
+          "markdownDescription": "Denies the hide_bar command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_selected command without any pre-configured scope.",
+          "type": "string",
+          "const": "glasstabbar:deny-set-selected",
+          "markdownDescription": "Denies the set_selected command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the show_bar command without any pre-configured scope.",
+          "type": "string",
+          "const": "glasstabbar:deny-show-bar",
+          "markdownDescription": "Denies the show_bar command without any pre-configured scope."
+        },
+        {
           "description": "Allows listing products, making a purchase, and restoring purchases.\n#### This default permission set includes:\n\n- `allow-get-products`\n- `allow-purchase`\n- `allow-restore-purchases`",
           "type": "string",
           "const": "iap:default",
@@ -2503,6 +2545,36 @@
           "type": "string",
           "const": "opener:deny-reveal-item-in-dir",
           "markdownDescription": "Denies the reveal_item_in_dir command without any pre-configured scope."
+        },
+        {
+          "description": "Allows registering for push notifications and setting home-screen Quick Actions.\n#### This default permission set includes:\n\n- `allow-register`\n- `allow-set-quick-actions`",
+          "type": "string",
+          "const": "push:default",
+          "markdownDescription": "Allows registering for push notifications and setting home-screen Quick Actions.\n#### This default permission set includes:\n\n- `allow-register`\n- `allow-set-quick-actions`"
+        },
+        {
+          "description": "Enables the register command without any pre-configured scope.",
+          "type": "string",
+          "const": "push:allow-register",
+          "markdownDescription": "Enables the register command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_quick_actions command without any pre-configured scope.",
+          "type": "string",
+          "const": "push:allow-set-quick-actions",
+          "markdownDescription": "Enables the set_quick_actions command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the register command without any pre-configured scope.",
+          "type": "string",
+          "const": "push:deny-register",
+          "markdownDescription": "Denies the register command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_quick_actions command without any pre-configured scope.",
+          "type": "string",
+          "const": "push:deny-set-quick-actions",
+          "markdownDescription": "Denies the set_quick_actions command without any pre-configured scope."
         },
         {
           "description": "Allows presenting the in-app OAuth browser.\n#### This default permission set includes:\n\n- `allow-authenticate`",

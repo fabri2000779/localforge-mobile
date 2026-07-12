@@ -125,9 +125,20 @@ pub async fn cloud_relay_start(
                     backoff.reset();
                     let _ = app_for_loop.emit("cloud://relay-connected", ());
 
-                    // Multiplex three things: cancellation, outbound
-                    // messages queued by Tauri commands, inbound WS
-                    // frames. `biased` so cancellation wins ties.
+                    // App-level keepalive. The DO's setWebSocketAutoResponse
+                    // expects the CLIENT to send `{"type":"ping"}`; without it a
+                    // socket left idle (app backgrounded on iOS, then resumed
+                    // over a half-open TCP) never errored, so `ws.next()` hung
+                    // forever and the reconnect loop NEVER fired — a permanent
+                    // zombie until the app was killed (audit finding). The ping
+                    // also surfaces a dead link as a send error → reconnect.
+                    let mut ping = tokio::time::interval(Duration::from_secs(30));
+                    ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                    ping.tick().await; // consume the immediate first tick
+
+                    // Multiplex: cancellation, outbound messages queued by Tauri
+                    // commands, inbound WS frames, keepalive. `biased` so
+                    // cancellation wins ties.
                     loop {
                         tokio::select! {
                             biased;
@@ -157,11 +168,22 @@ pub async fn cloud_relay_start(
                                     break;
                                 }
                                 None => break,
+                            },
+                            _ = ping.tick() => {
+                                if ws.send(Message::Text("{\"type\":\"ping\"}".to_string().into())).await.is_err() {
+                                    tracing::warn!("[relay] keepalive send failed; reconnecting");
+                                    break;
+                                }
                             }
                         }
                     }
 
                     let _ = app_for_loop.emit("cloud://relay-disconnected", ());
+                    // Drop commands queued while this connection was dead so a
+                    // stale burst (a minute-late stop, duplicate restarts) can't
+                    // land on the owner's servers when we reconnect (audit
+                    // finding — the desktop client does the same).
+                    while out_rx.try_recv().is_ok() {}
                 }
                 Err(e) => {
                     tracing::warn!("[relay] connect failed: {}", e);

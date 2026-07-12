@@ -62,6 +62,11 @@ interface Props {
    *  came/went online updates without remounting. */
   desktopOnline?: boolean;
   embedded?: boolean;
+  /** Whether the user may use cloud servers for the ACTIVE org. True for a paid
+   *  own-org, and ALSO for a borrowed org (member of someone else's Team) — the
+   *  cloud gates the latter with a 402 which we map to 'paywalled'. Replaces the
+   *  own-plan-only `isPaid` check that locked free teammates out (audit finding). */
+  allowed: boolean;
   onBack: () => void;
   onOpenServer: (server: ServerSummary, status?: ServerStatus) => void;
   onMeUpdated: (me: Me) => void;
@@ -75,8 +80,8 @@ type State =
 
 const ALL = '__all__';
 
-export function ServerListScreen({ me, onlineNodeIds, desktopOnline, embedded, onBack, onOpenServer, onMeUpdated }: Props) {
-  const isPaid = me.subscription.plan !== 'free';
+export function ServerListScreen({ me, onlineNodeIds, desktopOnline, embedded, allowed, onBack, onOpenServer, onMeUpdated }: Props) {
+  const isPaid = allowed;
   const [state, setState] = useState<State>(isPaid ? { kind: 'loading' } : { kind: 'paywalled' });
   const [refreshing, setRefreshing] = useState(false);
   const [statuses, setStatuses] = useState<Map<string, ServerStatus>>(new Map());

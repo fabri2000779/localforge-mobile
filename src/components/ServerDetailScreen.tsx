@@ -127,6 +127,15 @@ interface StatsSnapshotEvent {
   stats: ContainerStats;
 }
 
+/** Full-list snapshot (no `target`) — requested on relay reconnect to refresh
+ *  this server's status after a gap where state_changed events were missed. */
+interface StateSnapshotEvent {
+  type: 'event';
+  kind: 'state_snapshot';
+  request_id?: string;
+  servers?: Array<{ id?: string; status?: string }>;
+}
+
 /** Hard cap on retained log lines. Mobile WebViews choke on tens of
  *  thousands of DOM nodes — 500 is comfortable, plenty for an "is my
  *  server happy" glance. Older lines drop off the top. */
@@ -225,11 +234,19 @@ export function ServerDetailScreen({ server, initialStatus, desktopOnline, onlin
     // fire a stray detach with an unresolved nodeId.
     let attached = false;
 
-    listen<LogsSnapshotEvent | RelayConsoleEvent | StateChangedEvent | StatsSnapshotEvent>(
+    listen<LogsSnapshotEvent | RelayConsoleEvent | StateChangedEvent | StatsSnapshotEvent | StateSnapshotEvent>(
       'cloud://relay-event',
       (event) => {
         const m = event.payload;
-        if (!m || m.target !== server.id) return;
+        if (!m) return;
+        // A full-list snapshot (from the reconnect refresh below) carries no
+        // `target`; pick our server's status out of it before the target filter.
+        if (m.kind === 'state_snapshot') {
+          const mine = (m.servers ?? []).find((s) => s.id === server.id);
+          if (mine?.status) setStatus(mine.status as ServerStatus);
+          return;
+        }
+        if (m.target !== server.id) return;
         if (m.kind === 'logs_snapshot') {
           // Seed the buffer with the backlog. get_server_logs returns up
           // to "now", so a live line racing in is already included.
@@ -276,6 +293,29 @@ export function ServerDetailScreen({ server, initialStatus, desktopOnline, onlin
       if (cancelled) u(); else unsub = u;
     });
 
+    // Re-sync after a relay reconnect. The console effect attaches + pulls the
+    // backlog ONCE on mount; if the socket died (app backgrounded) and came back,
+    // everything emitted in the gap — including the crash that took the server
+    // down — was lost and nothing re-fetched it, leaving a frozen 'Running' badge
+    // and a hole in the console (audit finding). On reconnect, re-request the
+    // status snapshot, the backlog, and re-attach.
+    let unsubReconnect: UnlistenFn | undefined;
+    listen('cloud://relay-connected', () => {
+      void cloudRelaySendCmd({
+        type: 'cmd', cmd: 'state.snapshot', request_id: crypto.randomUUID(),
+      });
+      void cloudRelaySendCmd({
+        type: 'cmd', cmd: 'server.logs', request_id: crypto.randomUUID(),
+        target: server.id, args: relayArgs({ lines: 200 }),
+      });
+      void cloudRelaySendCmd({
+        type: 'cmd', cmd: 'server.attach', request_id: crypto.randomUUID(),
+        target: server.id, args: relayArgs(),
+      });
+    }).then((u) => {
+      if (cancelled) u(); else unsubReconnect = u;
+    });
+
     // Resolve nodeId from the decrypted config, then attach + request the
     // backlog with it. If the sync key is locked we proceed without one
     // (the owner defaults to 'local').
@@ -316,6 +356,7 @@ export function ServerDetailScreen({ server, initialStatus, desktopOnline, onlin
     return () => {
       cancelled = true;
       unsub?.();
+      unsubReconnect?.();
       if (attached) {
         void cloudRelaySendCmd({
           type: 'cmd',

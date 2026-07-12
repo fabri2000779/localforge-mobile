@@ -105,15 +105,24 @@ pub async fn cloud_server_config(
             message: Some("unlock the sync key first".into()),
         });
     };
-    let raw = sync::list_servers(&token).await?;
-    let Some(server) = raw.into_iter().find(|s| s.id == server_id) else {
-        return Err(ApiError::Server {
-            status: 404,
-            code: "not_found".into(),
-            message: None,
-        });
-    };
-    let plain = crypto::decrypt(&dek, &server.encrypted_blob)
+    // Fetch ONLY this server's blob. The old path pulled the ENTIRE org list
+    // (~5-50 KB per row) just to keep one and drop the rest — wasteful over
+    // cellular on every config open (audit finding). GET /v1/sync/servers/:id
+    // returns a single row.
+    #[derive(Deserialize)]
+    struct OneServerResp {
+        server: OneServer,
+    }
+    #[derive(Deserialize)]
+    struct OneServer {
+        encrypted_blob: String,
+    }
+    let resp: OneServerResp = localforge_cloud_client::api::get(
+        &format!("/v1/sync/servers/{server_id}"),
+        Some(&token),
+    )
+    .await?;
+    let plain = crypto::decrypt(&dek, &resp.server.encrypted_blob)
         .map_err(|e| ApiError::Decode(format!("decrypt: {e}")))?;
     serde_json::from_slice::<ServerConfigView>(&plain)
         .map_err(|e| ApiError::Decode(format!("parse config: {e}")))

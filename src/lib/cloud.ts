@@ -426,8 +426,9 @@ export function cloudBackupTargetDelete(id: string): Promise<void> {
 
 // ---------------------------------------------------------------------------
 // Backups + schedules (driven over the relay; the host holds the S3 creds —
-// the secret never reaches the phone or the cloud). Wire shapes mirror the
-// Rust `BackupEntry` / `Schedule` / `ScheduleAction` (all camelCase).
+// the secret never reaches the phone or the cloud). Wire shapes mirror the Rust
+// `BackupEntry` / `Schedule` / `ScheduleAction` — MOSTLY camelCase, but the
+// backup action's struct fields are snake_case (see ScheduleAction below).
 // ---------------------------------------------------------------------------
 
 export interface BackupEntry {
@@ -440,7 +441,12 @@ export type ScheduleAction =
   | { kind: 'restart' }
   | { kind: 'command'; command: string }
   | { kind: 'broadcast'; message: string }
-  | { kind: 'backup'; targetId?: string; keepLast?: number; maxAgeDays?: number };
+  // NB: the Rust enum's `rename_all = "camelCase"` renames only the VARIANT
+  // TAGS, not struct-variant FIELDS — so the wire for backup is snake_case
+  // (`target_id`, `keep_last`, `max_age_days`). Sending camelCase made serde
+  // silently drop them, so backups from mobile ran against the FIRST target with
+  // no retention (audit finding). The desktop already uses snake_case here.
+  | { kind: 'backup'; target_id?: string; keep_last?: number; max_age_days?: number };
 
 export interface Schedule {
   id: string;

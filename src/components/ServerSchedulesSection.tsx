@@ -120,11 +120,13 @@ export function ServerSchedulesSection({
       if (!targetId) return;
       const kl = parseInt(keepLast, 10);
       const ma = parseInt(maxAgeDays, 10);
+      // snake_case fields — the Rust enum keeps struct-variant fields snake_case
+      // even with rename_all=camelCase (audit finding); camelCase was dropped.
       action = {
         kind: 'backup',
-        targetId,
-        keepLast: Number.isFinite(kl) && kl > 0 ? kl : undefined,
-        maxAgeDays: Number.isFinite(ma) && ma > 0 ? ma : undefined,
+        target_id: targetId,
+        keep_last: Number.isFinite(kl) && kl > 0 ? kl : undefined,
+        max_age_days: Number.isFinite(ma) && ma > 0 ? ma : undefined,
       };
     } else {
       action = { kind: 'restart' };

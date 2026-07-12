@@ -60,18 +60,29 @@ export async function purchaseAndVerify(productId: string): Promise<Me> {
 /**
  * Restore flow: read active entitlements from the store and verify each
  * with the cloud. Returns the latest Me, or null when the store reports
- * nothing to restore. Verify failures on individual entitlements are
- * swallowed so one stale receipt doesn't abort the whole restore.
+ * NOTHING to restore. Distinct from that: if the store DID report purchases but
+ * every cloud verify failed (e.g. poor connectivity — the store answers from
+ * the device cache while our POST fails), we THROW the last error instead of
+ * returning null, so the UI can say "couldn't verify, retry" rather than the
+ * misleading "no active subscription found" that made users think their sub was
+ * lost (audit finding).
  */
 export async function restoreAndVerify(): Promise<Me | null> {
   const restored = await storeRestore();
+  if (restored.length === 0) return null; // genuinely nothing on this account
   let latest: Me | null = null;
+  let lastError: unknown = null;
   for (const r of restored) {
     try {
       latest = await verify(r);
     } catch (e) {
+      lastError = e;
       console.warn('restore: verify failed for', r.productId, e);
     }
+  }
+  if (!latest && lastError) {
+    // Had entitlements but couldn't verify ANY of them — surface it.
+    throw lastError instanceof Error ? lastError : new Error('restore verification failed');
   }
   return latest;
 }

@@ -143,9 +143,15 @@ pub async fn cloud_me(app: tauri::AppHandle) -> Result<Option<Me>, ApiError> {
         Ok(me) => Ok(Some(me)),
         // Token was revoked / expired remotely — drop it locally so the
         // UI shows the sign-in screen again instead of silently failing
-        // every subsequent cloud call.
+        // every subsequent cloud call. Wipe key material + the active-org pin
+        // too, same as logout: otherwise a remotely-revoked session (password
+        // change on another device) left the DEK / X25519 secret behind for the
+        // next account on this device to inherit, and cloud_sync_key_setup would
+        // reuse that DEK — cross-linking the two accounts (audit finding).
         Err(ApiError::Server { status, .. }) if status == 401 || status == 403 => {
             let _ = clear_token(&app);
+            crate::vault::clear_local_keys(&app);
+            localforge_cloud_client::api::set_active_org(None);
             Ok(None)
         }
         Err(e) => Err(e),
@@ -164,6 +170,10 @@ pub async fn cloud_logout(app: tauri::AppHandle) -> Result<(), ApiError> {
     // Wipe all local key material too — otherwise the next account on a shared
     // device inherits the previous user's cached DEK / org keys / X25519 secret.
     crate::vault::clear_local_keys(&app);
+    // Clear the process-global active-org pin (its contract says "cleared on
+    // sign-out"): otherwise the next user's first org-scoped requests went out
+    // with the previous user's X-LocalForge-Org header and 403'd (audit finding).
+    localforge_cloud_client::api::set_active_org(None);
     Ok(())
 }
 
@@ -180,6 +190,13 @@ pub async fn cloud_delete_account(app: tauri::AppHandle) -> Result<(), ApiError>
     let Some(token) = load_token(&app) else {
         return Err(ApiError::Decode("no active session".into()));
     };
+    // Revoke this device's push token FIRST, while the session is still valid —
+    // the delete below destroys the session, after which the token can never be
+    // unregistered from the phone, and the cloud row would keep the deleted
+    // account's device on file (audit finding). Best-effort; the cloud's account
+    // delete also drops push_tokens as a backstop.
+    let _ = crate::push::cloud_push_unregister(app.clone(), None).await;
+
     let _: serde_json::Value = localforge_cloud_client::api::post(
         "/v1/account/delete",
         &serde_json::json!({ "confirm": "DELETE" }),
@@ -190,6 +207,7 @@ pub async fn cloud_delete_account(app: tauri::AppHandle) -> Result<(), ApiError>
     // X25519 secret) so nothing of the deleted user lingers on the device.
     clear_token(&app).map_err(|e| ApiError::Decode(format!("token store: {e}")))?;
     crate::vault::clear_local_keys(&app);
+    localforge_cloud_client::api::set_active_org(None);
     Ok(())
 }
 

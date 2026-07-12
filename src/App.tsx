@@ -326,8 +326,17 @@ function App() {
   // started when we have a paid session, torn down on sign-out (or when
   // the signed-in user changes). Keyed on the user id so a benign `me`
   // refresh (same user, still paid) doesn't churn the connection.
+  // A free user who is a MEMBER of someone else's Team org must still get the
+  // relay + server list — the whole point of the Team plan (the cloud gates on
+  // the OWNER's plan and 402s otherwise). Gating on the user's OWN plan locked
+  // free teammates out of the borrowed org entirely (audit finding). Only
+  // require a paid own-plan when the ACTIVE org is the user's own.
+  const activeOrgForGate =
+    state.kind === 'signed-in' && activeOrgId ? orgs.find((o) => o.id === activeOrgId) : null;
+  const activeOrgIsOwned = activeOrgId === null || (activeOrgForGate?.isOwner ?? true);
   const relayUserId =
-    state.kind === 'signed-in' && state.me.subscription.plan !== 'free'
+    state.kind === 'signed-in' &&
+    (activeOrgIsOwned ? state.me.subscription.plan !== 'free' : true)
       ? state.me.id
       : null;
   const signedInId = state.kind === 'signed-in' ? state.me.id : null;
@@ -443,23 +452,32 @@ function App() {
 
     void listen<{
       you?: { session_id?: string };
-      peers?: Array<{ kind?: string; session_id?: string; node_id?: string }>;
+      peers?: Array<{ kind?: string; session_id?: string; node_id?: string; device_id?: string }>;
     }>('cloud://relay-hello', (e) => {
       const mySession = e.payload?.you?.session_id;
       const peers = e.payload?.peers ?? [];
-      applyOwners(peers.filter((p) => p.kind === 'owner' && p.session_id !== mySession).length);
+      // Only an owner peer with a verified device_id is a real DESKTOP executor.
+      // A plain kind:'owner' is any of the owner's sessions — including their own
+      // phone / iPad, which never processes commands — so counting those lit up
+      // Start/Stop and stats polling that then timed out with no executor (audit
+      // finding). The mobile client never sends a device_id, so it's excluded.
+      applyOwners(
+        peers.filter((p) => p.kind === 'owner' && p.device_id && p.session_id !== mySession).length,
+      );
       nodeIdsRef.current = new Set(
         peers.filter((p) => p.kind === 'node' && p.node_id).map((p) => p.node_id as string),
       );
       commitNodes();
     }).then((u) => { if (active) unlistens.push(u); else u(); });
 
-    void listen<{ kind?: string; client_kind?: string; node_id?: string }>(
+    void listen<{ kind?: string; client_kind?: string; node_id?: string; device_id?: string }>(
       'cloud://relay-presence',
       (e) => {
         const p = e.payload;
         if (!p) return;
-        if (p.client_kind === 'owner') {
+        // Same device_id gate as the hello handler — a desktop join/leave, not
+        // just any owner session (audit finding).
+        if (p.client_kind === 'owner' && p.device_id) {
           if (p.kind === 'join') applyOwners(ownerPeersRef.current + 1);
           else if (p.kind === 'leave') applyOwners(ownerPeersRef.current - 1);
         } else if (p.client_kind === 'node' && p.node_id) {
@@ -470,6 +488,17 @@ function App() {
       },
     ).then((u) => { if (active) unlistens.push(u); else u(); });
 
+    // When the socket drops, presence is stale (the last hello's peers may all be
+    // gone). Nothing cleared it, so the UI stayed 'Live' with active buttons over
+    // a dead socket until a new hello — which may never come (audit finding).
+    // Reset on disconnect; the next hello re-establishes the truth.
+    void listen('cloud://relay-disconnected', () => {
+      ownerPeersRef.current = 0;
+      nodeIdsRef.current = new Set();
+      setDesktopOnline(false);
+      setOnlineNodeIds(new Set());
+    }).then((u) => { if (active) unlistens.push(u); else u(); });
+
     return () => {
       active = false;
       unlistens.forEach((u) => u());
@@ -478,7 +507,9 @@ function App() {
       setDesktopOnline(false);
       setOnlineNodeIds(new Set());
     };
-  }, [relayUserId]);
+    // Include activeOrgId: on an org switch the relay restarts, and presence from
+    // the PREVIOUS org must be cleared rather than shown against the new one.
+  }, [relayUserId, activeOrgId]);
 
   // One step "back" through the pushed overlays: config → server detail →
   // tab root. The tab roots themselves have nowhere to pop to (you switch
@@ -666,6 +697,10 @@ function App() {
         return (
           <ServerListScreen
             me={s.me}
+            // A free member of a borrowed Team org is allowed — let the cloud's
+            // 402 (owner not on Team) decide, don't gate on the user's own plan
+            // (audit finding).
+            allowed={activeOrgIsOwned ? s.me.subscription.plan !== 'free' : true}
             embedded
             desktopOnline={desktopOnline}
             onlineNodeIds={onlineNodeIds}
@@ -681,7 +716,7 @@ function App() {
           <MachinesScreen
             desktopOnline={desktopOnline}
             onlineNodeIds={onlineNodeIds}
-            isPaid={s.me.subscription.plan !== 'free'}
+            isPaid={activeOrgIsOwned ? s.me.subscription.plan !== 'free' : true}
           />
         );
       case 'team':
@@ -708,6 +743,12 @@ function App() {
       const server = overlay.server;
       return (
         <ServerDetailScreen
+          // Key by server id: a crash push / Quick Action can REPLACE this
+          // overlay with a different server without unmounting, and without the
+          // key React reused the instance — showing server A's logs, status and
+          // stats (and routing polls to A's node) under server B's title until
+          // async fetches caught up (audit finding).
+          key={server.id}
           server={server}
           initialStatus={overlay.status}
           desktopOnline={desktopOnline}
@@ -720,6 +761,7 @@ function App() {
     const server = overlay.server;
     return (
       <ServerConfigScreen
+        key={server.id}
         server={server}
         activeOrgId={activeOrgId}
         onBack={() => setState({ ...s, overlay: { kind: 'server', server } })}
