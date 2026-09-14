@@ -9,7 +9,6 @@ android {
 
     defaultConfig {
         minSdk = 24
-        targetSdk = 34
         consumerProguardFiles("proguard-rules.pro")
     }
 
@@ -23,12 +22,16 @@ android {
         }
     }
 
-    kotlinOptions {
-        jvmTarget = "1.8"
-    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8
         targetCompatibility = JavaVersion.VERSION_1_8
+    }
+}
+
+// Kotlin 2 DSL (kotlinOptions is deprecated); must match compileOptions above.
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_1_8)
     }
 }
 

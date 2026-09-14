@@ -42,6 +42,7 @@ class IapPlugin(private val activity: Activity) : Plugin(activity), PurchasesUpd
 
     private val billingClient: BillingClient = BillingClient.newBuilder(activity)
         .setListener(this)
+        .enableAutoServiceReconnection()
         .enablePendingPurchases(
             PendingPurchasesParams.newBuilder().enableOneTimeProducts().build()
         )
@@ -69,7 +70,7 @@ class IapPlugin(private val activity: Activity) : Plugin(activity), PurchasesUpd
             }
 
             override fun onBillingServiceDisconnected() {
-                // No-op: the next withConnection() call reconnects.
+                // The client reconnects itself (enableAutoServiceReconnection); withConnection() also retries.
             }
         })
     }
@@ -94,7 +95,8 @@ class IapPlugin(private val activity: Activity) : Plugin(activity), PurchasesUpd
                     return@queryProductDetailsAsync
                 }
                 val arr = JSArray()
-                for (pd in details) {
+                // PBL 8+: the result also lists unfetched products; only the fetched ones are shown.
+                for (pd in details.productDetailsList) {
                     val phase = pd.subscriptionOfferDetails
                         ?.firstOrNull()
                         ?.pricingPhases
@@ -133,11 +135,11 @@ class IapPlugin(private val activity: Activity) : Plugin(activity), PurchasesUpd
                 .setProductList(productList)
                 .build()
             billingClient.queryProductDetailsAsync(params) { result, details ->
-                if (result.responseCode != BillingClient.BillingResponseCode.OK || details.isEmpty()) {
+                val pd = details.productDetailsList.firstOrNull()
+                if (result.responseCode != BillingClient.BillingResponseCode.OK || pd == null) {
                     invoke.reject("product not found: ${args.productId}")
                     return@queryProductDetailsAsync
                 }
-                val pd = details.first()
                 val offerToken = pd.subscriptionOfferDetails?.firstOrNull()?.offerToken
                 if (offerToken == null) {
                     invoke.reject("no subscription offer for ${args.productId}")

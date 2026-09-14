@@ -14,7 +14,7 @@
 //! (in the sandboxed token file, never in the WebView). The cloud route
 //! is authed, so the bearer has to come from `load_token`.
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use localforge_cloud_client::api::{self, ApiError};
 use localforge_cloud_client::auth::{self, Me};
@@ -25,17 +25,6 @@ fn require_token(app: &tauri::AppHandle) -> Result<String, ApiError> {
         code: "unauthenticated".into(),
         message: None,
     })
-}
-
-/// The cloud verify routes answer `{ ok: true, plan }`. We don't act on
-/// the body — `fetch_me` is the source of truth for the refreshed
-/// subscription — but `api::post` needs a concrete deserialisation type.
-#[derive(Deserialize)]
-struct VerifyResponse {
-    #[allow(dead_code)]
-    ok: bool,
-    #[allow(dead_code)]
-    plan: String,
 }
 
 #[derive(Serialize)]
@@ -58,7 +47,7 @@ pub async fn cloud_iap_verify_apple(
     transaction_id: String,
 ) -> Result<Me, ApiError> {
     let token = require_token(&app)?;
-    let _: VerifyResponse = api::post(
+    let _: serde_json::Value = api::post(
         "/v1/iap/apple/verify",
         &AppleVerifyBody {
             transaction_id: &transaction_id,
@@ -77,7 +66,7 @@ pub async fn cloud_iap_verify_google(
     product_id: String,
 ) -> Result<Me, ApiError> {
     let token = require_token(&app)?;
-    let _: VerifyResponse = api::post(
+    let _: serde_json::Value = api::post(
         "/v1/iap/google/verify",
         &GoogleVerifyBody {
             purchase_token: &purchase_token,

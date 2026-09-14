@@ -1,6 +1,6 @@
 [package]
 name = "localforge-mobile"
-version = "0.3.6"
+version = "0.4.0"
 description = "LocalForge mobile companion — iOS + Android"
 authors = ["Fabrizio"]
 edition = "2021"
@@ -58,6 +58,10 @@ tauri-plugin-webauth = { path = "plugins/tauri-plugin-webauth" }
 # webview. No-op on Android/desktop — they keep the in-webview CSS bar.
 tauri-plugin-glasstabbar = { path = "plugins/tauri-plugin-glasstabbar" }
 
+# Android Restore Credentials (Credential Manager) for Zero-Tap Sign-In: the phone keeps a
+# WebAuthn key in Block Store that follows the user to their next device. iOS/desktop get a stub.
+tauri-plugin-restorecred = { path = "plugins/tauri-plugin-restorecred" }
+
 # Shared crates pulled from the public localforge repo. Cargo walks
 # the repo tree at fetch time, finds the Cargo.toml whose package
 # name matches, and uses that crate.
@@ -75,12 +79,12 @@ localforge-cloud-client = { git = "https://github.com/fabri2000779/localforge.gi
 
 # Local-only dependencies: things the mobile uses that the shared
 # crates don't transitively expose.
-base64 = "0.22"
+base64 = "0.23"
 # WS client for the cloud relay. The full relay state machine isn't
 # yet in the shared crate (event sink trait is the next refactor), so
 # the mobile builds its own connection loop on top of these primitives
 # + the WS URL helper from `localforge_cloud_client::relay`.
-tokio-tungstenite = { version = "0.29", default-features = false, features = ["rustls-tls-webpki-roots", "connect"] }
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["rustls-tls-webpki-roots", "connect"] }
 # Used by the relay's `SinkExt::send` / `StreamExt::next` extension
 # methods. Direct dep since tokio-tungstenite re-exports the trait
 # objects but not the trait-import path.
@@ -88,7 +92,7 @@ futures-util = "0.3"
 # Backoff jitter — the reconnect loop wants ±20% randomness. The
 # cloud-client transitively brings rand in but Cargo's visibility
 # rules don't expose transitive deps, so we list it directly.
-rand = "0.9"
+rand = "0.10"
 
 # rustls is pulled in transitively (reqwest in the cloud-client + the
 # relay WebSocket), both built with a "rustls-no-provider" feature — so
@@ -126,3 +130,4 @@ lto = true
 codegen-units = 1
 strip = true
 panic = "abort"
+

@@ -44,9 +44,38 @@ use tauri::Emitter;
 /// (it's the desktop deep-link path too), so no cloud change is needed.
 const REDIRECT_URI: &str = "localforge://auth/callback";
 
+/// When the user last tapped an OAuth provider button in THIS process. The
+/// in-app browser session hands its callback straight back to
+/// `cloud_oauth_start`, so it needs no gate — but the HTTPS Universal-Link
+/// fallback (`https://localforge.gg/auth/mobile-callback?token=…`) is an OS
+/// deep link ANY web page can point the user at. Left open, an attacker who
+/// completes OAuth against their own account can hand the victim's phone a link
+/// that signs it into the attacker's account (login CSRF — audit finding, same
+/// class as the desktop's). Accept that fallback only while a sign-in started
+/// here is recent.
+static OAUTH_STARTED_AT: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+const OAUTH_FALLBACK_WINDOW: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+fn mark_oauth_started() {
+    if let Ok(mut g) = OAUTH_STARTED_AT.lock() {
+        *g = Some(std::time::Instant::now());
+    }
+}
+
+/// True (and consumes the mark) when a sign-in was started here recently.
+#[allow(dead_code)]
+fn take_recent_oauth_start() -> bool {
+    let Ok(mut g) = OAUTH_STARTED_AT.lock() else { return false };
+    match g.take() {
+        Some(t) => t.elapsed() <= OAUTH_FALLBACK_WINDOW,
+        None => false,
+    }
+}
+
 #[tauri::command]
 pub async fn cloud_oauth_start(app: AppHandle, provider: String) -> Result<(), String> {
     let url = shared::start_url(&api_origin(), &provider, REDIRECT_URI).map_err(|e| e.to_string())?;
+    mark_oauth_started();
 
     #[cfg(mobile)]
     {
@@ -102,6 +131,18 @@ pub async fn handle_deep_link(app: AppHandle, url: String) {
     // here too would double-process. We keep the HTTPS shape only as a
     // defensive fallback for any web-flow redirect.
     if url.starts_with("https://localforge.gg/auth/mobile-callback") {
+        // Only redeem this fallback for a sign-in started in this process
+        // (see OAUTH_STARTED_AT) — otherwise a crafted link signs the phone
+        // into someone else's account.
+        if !take_recent_oauth_start() {
+            tracing::warn!("[oauth] ignoring mobile-callback deep link with no sign-in in progress");
+            emit_error(
+                &app,
+                "unexpected_callback",
+                "sign-in wasn't started from this app (or it expired) — please try again",
+            );
+            return;
+        }
         handle_auth_callback(app, url).await;
         return;
     }
@@ -254,7 +295,18 @@ fn hex_nibble(b: u8) -> Option<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_fragment_param;
+    use super::{mark_oauth_started, parse_fragment_param, take_recent_oauth_start};
+
+    #[test]
+    fn mobile_callback_fallback_requires_a_recent_start() {
+        // Nothing started → refused (the drive-by link case).
+        let _ = take_recent_oauth_start();
+        assert!(!take_recent_oauth_start());
+        // Started → accepted exactly once.
+        mark_oauth_started();
+        assert!(take_recent_oauth_start());
+        assert!(!take_recent_oauth_start());
+    }
 
     #[test]
     fn fragment_secret_percent_decoded() {

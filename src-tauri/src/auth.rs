@@ -74,16 +74,9 @@ pub fn load_token(app: &tauri::AppHandle) -> Option<String> {
     Some(from_disk)
 }
 
-/// Persist the JWT to disk + warm the cache. Called from the
-/// `cloud_login` / `cloud_signup` paths AND from the OAuth deep-link
-/// handler in `oauth::handle_auth_callback`, hence pub(crate).
-///
-/// Mobile-gated because the only crate-external caller is the
-/// deep-link handler, which itself is gated to iOS/Android. On a
-/// desktop preview build this would otherwise warn as dead code —
-/// every command path that needs to save a token from outside this
-/// module is mobile-only.
-#[cfg(any(target_os = "android", target_os = "ios"))]
+/// Persist the JWT to disk + warm the cache. Called from the `cloud_login` / `cloud_signup`
+/// paths, the OAuth deep-link handler (`oauth::handle_auth_callback`) and the restore-key
+/// sign-in (`restore::cloud_restore_sign_in`), hence pub(crate).
 pub(crate) fn save_session_token(app: &tauri::AppHandle, token: &str) -> Result<(), String> {
     save_token(app, token)
 }
@@ -151,6 +144,8 @@ pub async fn cloud_me(app: tauri::AppHandle) -> Result<Option<Me>, ApiError> {
         Err(ApiError::Server { status, .. }) if status == 401 || status == 403 => {
             let _ = clear_token(&app);
             crate::vault::clear_local_keys(&app);
+            // The cloud dropped the restore keys with the session (password reset); ours is dead too.
+            crate::restore::clear_local(&app);
             localforge_cloud_client::api::set_active_org(None);
             Ok(None)
         }
@@ -163,6 +158,9 @@ pub async fn cloud_logout(app: tauri::AppHandle) -> Result<(), ApiError> {
     // Tell the API to revoke the session so other devices stop syncing
     // from it. Fire-and-forget — if it fails (offline, etc.) the local
     // clear still happens.
+    // Revoke this device's restore key while the session is still valid, so the user's next
+    // device isn't signed straight back in.
+    crate::restore::forget(&app).await;
     if let Some(token) = load_token(&app) {
         let _ = auth::logout(&token).await;
     }
@@ -196,6 +194,7 @@ pub async fn cloud_delete_account(app: tauri::AppHandle) -> Result<(), ApiError>
     // account's device on file (audit finding). Best-effort; the cloud's account
     // delete also drops push_tokens as a backstop.
     let _ = crate::push::cloud_push_unregister(app.clone(), None).await;
+    crate::restore::forget(&app).await;
 
     let _: serde_json::Value = localforge_cloud_client::api::post(
         "/v1/account/delete",

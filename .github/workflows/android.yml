@@ -136,6 +136,11 @@ jobs:
         env:
           NDK_HOME: ${{ env.NDK_HOME }}
 
+      # Tauri's template pins Kotlin 1.9, which can't read libraries built with Kotlin 2.1+
+      # (androidx.credentials 1.6 behind Zero-Tap Sign-In). Bump the generated project to Kotlin 2.
+      - name: Move the Android project to Kotlin 2
+        run: node scripts/patch-android-kotlin.cjs src-tauri/gen/android/build.gradle.kts
+
       # Same fix as iOS: `tauri android init` writes Tauri's PLACEHOLDER
       # launcher icons into the generated res/, not our real ones. Copy our
       # LocalForge mipmaps (incl. the adaptive-icon foreground + background)

@@ -2577,6 +2577,12 @@
           "markdownDescription": "Denies the set_quick_actions command without any pre-configured scope."
         },
         {
+          "description": "No JS-facing commands; the app's Rust side drives Restore Credentials.",
+          "type": "string",
+          "const": "restorecred:default",
+          "markdownDescription": "No JS-facing commands; the app's Rust side drives Restore Credentials."
+        },
+        {
           "description": "Allows presenting the in-app OAuth browser.\n#### This default permission set includes:\n\n- `allow-authenticate`",
           "type": "string",
           "const": "webauth:default",

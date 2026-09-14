@@ -1,0 +1,6 @@
+"$schema" = "schemas/schema.json"
+
+# Nothing is exposed to the WebView: the Rust auth module is the only caller.
+[default]
+description = "No JS-facing commands; the app's Rust side drives Restore Credentials."
+permissions = []

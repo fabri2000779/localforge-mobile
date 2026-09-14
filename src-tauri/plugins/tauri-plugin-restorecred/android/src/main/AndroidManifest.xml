@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Nothing to declare: Credential Manager needs no permissions; the Play services provider
+         contributes its own entries via manifest merge. -->
+</manifest>

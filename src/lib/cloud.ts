@@ -17,7 +17,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 // Wire types — match the cloud-client Rust definitions byte-for-byte.
 // ---------------------------------------------------------------------------
 
-export interface Subscription {
+interface Subscription {
   plan: 'free' | 'hobby' | 'team';
   currentPeriodEnd: number | null;
   cancelAtPeriodEnd: boolean;
@@ -25,7 +25,7 @@ export interface Subscription {
   purgeAt?: number | null;
 }
 
-export interface SyncKeyInfo {
+interface SyncKeyInfo {
   wrappedDek: string;
   kekSalt: string;
   kekParams: unknown | null;
@@ -87,6 +87,17 @@ export function cloudSignup(
 
 export function cloudLogout(): Promise<void> {
   return invoke('cloud_logout');
+}
+
+/** Zero-Tap Sign-In: sign in with the restore key carried over from the user's previous Android
+ *  device. Null when there is nothing to restore (iOS/desktop, fresh install, key cleared). */
+export function cloudRestoreSignIn(): Promise<Me | null> {
+  return invoke<Me | null>('cloud_restore_sign_in');
+}
+
+/** Register this device's restore key for the signed-in account (Android; false elsewhere). */
+export function cloudRestoreEnroll(): Promise<boolean> {
+  return invoke<boolean>('cloud_restore_enroll');
 }
 
 /**

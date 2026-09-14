@@ -367,6 +367,8 @@ function Field({
   );
 }
 
+const PROVIDER_LABEL = { apple: 'Apple', google: 'Google', discord: 'Discord', github: 'GitHub' } as const;
+
 function OAuthButton({
   provider,
   pending,
@@ -378,7 +380,7 @@ function OAuthButton({
   disabled?: boolean;
   onClick?: () => void;
 }) {
-  const label = provider[0]!.toUpperCase() + provider.slice(1);
+  const label = PROVIDER_LABEL[provider];
   return (
     <button
       type="button"

@@ -11,6 +11,7 @@ mod oauth;
 mod orgs;
 mod push;
 mod relay;
+mod restore;
 mod sync;
 mod vault;
 
@@ -51,15 +52,17 @@ pub fn run() {
         .plugin(tauri_plugin_push::init())
         .plugin(tauri_plugin_webauth::init())
         .plugin(tauri_plugin_glasstabbar::init())
+        .plugin(tauri_plugin_restorecred::init())
         .manage(std::sync::Arc::new(relay::RelayState::default()))
         .invoke_handler(tauri::generate_handler![
-            ping,
             auth::cloud_me,
             auth::cloud_login,
             auth::cloud_signup,
             auth::cloud_logout,
             auth::cloud_delete_account,
             auth::cloud_request_password_reset,
+            restore::cloud_restore_sign_in,
+            restore::cloud_restore_enroll,
             oauth::cloud_oauth_start,
             oauth::deep_link_replay,
             sync::cloud_servers_list,
@@ -121,11 +124,4 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("failed to launch LocalForge mobile");
-}
-
-/// Trivial round-trip command kept around for smoke-testing the
-/// Rust ↔ JS bridge from the dev console while iterating on the UI.
-#[tauri::command]
-fn ping() -> &'static str {
-    "pong"
 }

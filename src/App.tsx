@@ -36,6 +36,8 @@ import {
   cloudPushRegister,
   cloudRelayStart,
   cloudRelayStop,
+  cloudRestoreEnroll,
+  cloudRestoreSignIn,
   cloudServersList,
   cloudSetActiveOrg,
   cloudSyncKeyStatus,
@@ -124,6 +126,9 @@ function App() {
 
   useEffect(() => {
     cloudMe()
+      // No session: a restore key carried over from the user's previous Android device signs in
+      // without a tap (Zero-Tap Sign-In); it resolves null everywhere else.
+      .then(async (me) => me ?? (await cloudRestoreSignIn().catch(() => null)))
       .then((me) => {
         setState(
           me
@@ -340,6 +345,12 @@ function App() {
       ? state.me.id
       : null;
   const signedInId = state.kind === 'signed-in' ? state.me.id : null;
+
+  // Zero-Tap Sign-In: register this device's restore key for the account (Android; no-op elsewhere).
+  useEffect(() => {
+    if (!signedInId) return;
+    void cloudRestoreEnroll().catch(() => {});
+  }, [signedInId]);
 
   // Load the orgs the user belongs to (for the switcher). Reset the active
   // org when the signed-in user changes / signs out.
