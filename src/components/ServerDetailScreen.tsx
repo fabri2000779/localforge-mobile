@@ -58,6 +58,8 @@ interface Props {
   /** node_ids of enrolled agents currently connected to the relay directly.
    *  This server is controllable if its node is here, or the desktop is up. */
   onlineNodeIds: Set<string>;
+  /** False for viewers: Start / Stop / Restart render disabled instead of being refused by the relay. */
+  canControl: boolean;
   onBack: () => void;
   onOpenConfig: () => void;
 }
@@ -146,9 +148,13 @@ interface LogLine {
   line: string;
 }
 
-export function ServerDetailScreen({ server, initialStatus, desktopOnline, onlineNodeIds, onBack, onOpenConfig }: Props) {
+export function ServerDetailScreen({ server, initialStatus, desktopOnline, onlineNodeIds, canControl, onBack, onOpenConfig }: Props) {
   const [activeTab, setActiveTab] = useState<Tab>('console');
   const [pending, setPending] = useState<Action | null>(null);
+  // Mirrors `pending` for the relay listeners (their closures never see fresh state).
+  const pendingRef = useRef<Action | null>(null);
+  // A command the executor never answers must not pin the buttons: 20 s, then give up.
+  const pendingTimer = useRef<number | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
   const [logs, setLogs] = useState<LogLine[]>([]);
   // Live container status. Seeded from the list snapshot, then kept fresh
@@ -197,23 +203,50 @@ export function ServerDetailScreen({ server, initialStatus, desktopOnline, onlin
   // Subscribe to relay events to catch cmd_result responses from the
   // owner. Single listener for the whole screen lifetime.
   useEffect(() => {
-    let unsub: UnlistenFn | undefined;
+    let unsubResult: UnlistenFn | undefined;
+    let unsubError: UnlistenFn | undefined;
+    const settle = (toast: Toast) => {
+      awaitingId.current = null;
+      pendingRef.current = null;
+      if (pendingTimer.current != null) {
+        window.clearTimeout(pendingTimer.current);
+        pendingTimer.current = null;
+      }
+      setPending(null);
+      setToast(toast);
+    };
     listen<CmdResultEvent>('cloud://relay-event', (event) => {
       const msg = event.payload;
       if (msg?.kind !== 'cmd_result') return;
       if (msg.request_id !== awaitingId.current) return;
-      awaitingId.current = null;
-      setPending(null);
-      setToast(
+      settle(
         msg.success
           ? { kind: 'ok', text: friendlySuccess(msg.cmd) }
           : { kind: 'err', text: friendlyError(msg.cmd, msg.error) },
       );
     }).then((u) => {
-      unsub = u;
+      unsubResult = u;
+    });
+    // The relay refuses a command (role, scope, unknown cmd) with an `error` frame that carries no
+    // request_id — match it to the action in flight so the buttons don't stay disabled for good.
+    listen<{ code?: string; cmd?: string; required_role?: string }>('cloud://relay-error', (event) => {
+      const err = event.payload;
+      const action = pendingRef.current;
+      if (!action || err?.cmd !== `server.${action}`) return;
+      settle({
+        kind: 'err',
+        text:
+          err.code === 'forbidden'
+            ? `Your role can't ${action} servers${err.required_role ? ` (needs ${err.required_role})` : ''}.`
+            : `The relay rejected the command (${err.code ?? 'error'}).`,
+      });
+    }).then((u) => {
+      unsubError = u;
     });
     return () => {
-      unsub?.();
+      unsubResult?.();
+      unsubError?.();
+      if (pendingTimer.current != null) window.clearTimeout(pendingTimer.current);
     };
   }, []);
 
@@ -423,6 +456,7 @@ export function ServerDetailScreen({ server, initialStatus, desktopOnline, onlin
   async function fire(action: Action) {
     if (pending) return;
     setPending(action);
+    pendingRef.current = action;
     setToast(null);
     const requestId = crypto.randomUUID();
     awaitingId.current = requestId;
@@ -434,8 +468,19 @@ export function ServerDetailScreen({ server, initialStatus, desktopOnline, onlin
         target: server.id,
         args: relayArgs(),
       });
+      // Sending only proves the relay took it; the executor may never answer (offline mid-way, dropped
+      // frame). Release the buttons after 20 s instead of waiting forever.
+      pendingTimer.current = window.setTimeout(() => {
+        if (awaitingId.current !== requestId) return;
+        awaitingId.current = null;
+        pendingRef.current = null;
+        pendingTimer.current = null;
+        setPending(null);
+        setToast({ kind: 'err', text: 'No answer from the host — check that the desktop or agent is online and try again.' });
+      }, 20_000);
     } catch (e) {
       awaitingId.current = null;
+      pendingRef.current = null;
       setPending(null);
       setToast({
         kind: 'err',
@@ -526,17 +571,17 @@ export function ServerDetailScreen({ server, initialStatus, desktopOnline, onlin
         {isRunning ? (
           <>
             <button type="button" className="act-btn act-btn--secondary"
-              disabled={!!pending || !executorOnline} onClick={() => fire('stop')}>
+              disabled={!!pending || !executorOnline || !canControl} title={canControl ? undefined : 'Viewer role: read-only'} onClick={() => fire('stop')}>
               {pending === 'stop' ? <Loader2 size={15} className="spin" /> : <Square size={15} />} Stop
             </button>
             <button type="button" className="act-btn act-btn--secondary"
-              disabled={!!pending || !executorOnline} onClick={() => fire('restart')}>
+              disabled={!!pending || !executorOnline || !canControl} title={canControl ? undefined : 'Viewer role: read-only'} onClick={() => fire('restart')}>
               {pending === 'restart' ? <Loader2 size={15} className="spin" /> : <RefreshCcw size={15} />} Restart
             </button>
           </>
         ) : (
           <button type="button" className="act-btn act-btn--start"
-            disabled={!!pending || !executorOnline} onClick={() => fire('start')}>
+            disabled={!!pending || !executorOnline || !canControl} title={canControl ? undefined : 'Viewer role: read-only'} onClick={() => fire('start')}>
             {pending === 'start' ? <Loader2 size={15} className="spin" /> : <Play size={15} />} Start server
           </button>
         )}

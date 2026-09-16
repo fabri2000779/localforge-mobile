@@ -339,6 +339,9 @@ function App() {
   const activeOrgForGate =
     state.kind === 'signed-in' && activeOrgId ? orgs.find((o) => o.id === activeOrgId) : null;
   const activeOrgIsOwned = activeOrgId === null || (activeOrgForGate?.isOwner ?? true);
+  // Viewers can look but not start/stop. The relay enforces it; this keeps the buttons honest. An
+  // unknown role (org list still loading) stays enabled and lets the relay decide.
+  const canControl = activeOrgIsOwned || activeOrgForGate?.role !== 'viewer';
   const relayUserId =
     state.kind === 'signed-in' &&
     (activeOrgIsOwned ? state.me.subscription.plan !== 'free' : true)
@@ -764,6 +767,7 @@ function App() {
           initialStatus={overlay.status}
           desktopOnline={desktopOnline}
           onlineNodeIds={onlineNodeIds}
+          canControl={canControl}
           onBack={() => setState({ ...s, overlay: null })}
           onOpenConfig={() => setState({ ...s, overlay: { kind: 'config', server } })}
         />
