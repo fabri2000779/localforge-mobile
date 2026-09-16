@@ -718,6 +718,7 @@ function App() {
             embedded
             desktopOnline={desktopOnline}
             onlineNodeIds={onlineNodeIds}
+            canControl={canControl}
             onBack={() => {}}
             onOpenServer={(server, status) =>
               setState({ ...s, overlay: { kind: 'server', server, status } })

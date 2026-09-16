@@ -41,6 +41,9 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import {
   cloudRelaySendCmd,
   cloudServerConfig,
+  describeRelayError,
+  relayErrorMatches,
+  subscribeRelayError,
   type ServerSummary,
 } from '../lib/cloud';
 import { type ServerStatus } from './ServerListScreen';
@@ -227,19 +230,13 @@ export function ServerDetailScreen({ server, initialStatus, desktopOnline, onlin
     }).then((u) => {
       unsubResult = u;
     });
-    // The relay refuses a command (role, scope, unknown cmd) with an `error` frame that carries no
-    // request_id — match it to the action in flight so the buttons don't stay disabled for good.
-    listen<{ code?: string; cmd?: string; required_role?: string }>('cloud://relay-error', (event) => {
-      const err = event.payload;
+    // A refused command (role, scope, unknown cmd) never gets a cmd_result — the `error` frame is
+    // the only answer, so match it to the action in flight and release the buttons.
+    subscribeRelayError((err) => {
       const action = pendingRef.current;
-      if (!action || err?.cmd !== `server.${action}`) return;
-      settle({
-        kind: 'err',
-        text:
-          err.code === 'forbidden'
-            ? `Your role can't ${action} servers${err.required_role ? ` (needs ${err.required_role})` : ''}.`
-            : `The relay rejected the command (${err.code ?? 'error'}).`,
-      });
+      const requestId = awaitingId.current;
+      if (!action || !requestId || !relayErrorMatches(err, requestId, `server.${action}`)) return;
+      settle({ kind: 'err', text: describeRelayError(err) });
     }).then((u) => {
       unsubError = u;
     });

@@ -347,6 +347,38 @@ export function subscribeRelayEvent(
   return listen<Record<string, unknown>>('cloud://relay-event', (e) => handler(e.payload));
 }
 
+/** Server-side rejection of a cmd (role, scope, unknown cmd). A rejected cmd never gets a
+ *  cmd_result, so this is the only answer callers see; `request_id` is echoed when the relay knows it. */
+export type RelayError = {
+  code?: string;
+  cmd?: string;
+  request_id?: string;
+  target?: string;
+  required_role?: string;
+  current_role?: string;
+};
+export function subscribeRelayError(handler: (err: RelayError) => void): Promise<UnlistenFn> {
+  return listen<RelayError>('cloud://relay-error', (e) => handler(e.payload ?? {}));
+}
+/** Whether a rejection answers the cmd identified by `requestId` (falling back to the cmd name for
+ *  relays that don't echo the id yet). */
+export function relayErrorMatches(err: RelayError, requestId: string, cmd: string): boolean {
+  return err.request_id ? err.request_id === requestId : err.cmd === cmd;
+}
+export function describeRelayError(err: RelayError): string {
+  const what = err.cmd?.replace(/^server\./, '').replace(/_/g, ' ') ?? 'do that to';
+  switch (err.code) {
+    case 'forbidden':
+      return `Your role can't ${what} servers${err.required_role ? ` (needs ${err.required_role})` : ''}.`;
+    case 'out_of_scope':
+      return "This server isn't in your access scope.";
+    case 'unknown_cmd':
+      return 'The relay rejected an unknown command — update the app.';
+    default:
+      return `The relay rejected the command (${err.code ?? 'error'}).`;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Push notifications — device-token registration + the "open this server"
 // deep link a tapped crash push (or a home-screen Quick Action) routes through.
@@ -503,6 +535,10 @@ export async function relayRequest(opts: {
       else rejectFn(new Error(typeof msg.error === 'string' ? msg.error : 'Command failed'));
     }
   });
+  // A rejection (role / scope) fails fast instead of waiting for the timeout.
+  const unsubError = await subscribeRelayError((err) => {
+    if (relayErrorMatches(err, requestId, opts.cmd)) rejectFn(new Error(describeRelayError(err)));
+  });
   try {
     await cloudRelaySendCmd({
       type: 'cmd',
@@ -515,6 +551,7 @@ export async function relayRequest(opts: {
   } finally {
     clearTimeout(timer);
     unsub();
+    unsubError();
   }
 }
 
