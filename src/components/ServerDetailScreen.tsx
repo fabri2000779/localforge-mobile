@@ -22,7 +22,7 @@
  *
  * File manager is the one piece still out of scope on mobile.
  */
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   Archive,
   ArrowLeft,
@@ -205,19 +205,21 @@ export function ServerDetailScreen({ server, initialStatus, desktopOnline, onlin
 
   // Subscribe to relay events to catch cmd_result responses from the
   // owner. Single listener for the whole screen lifetime.
+  /** End the action in flight (ack, rejection, timeout or a confirming state change) with a toast. */
+  const settle = useCallback((toast: Toast) => {
+    awaitingId.current = null;
+    pendingRef.current = null;
+    if (pendingTimer.current != null) {
+      window.clearTimeout(pendingTimer.current);
+      pendingTimer.current = null;
+    }
+    setPending(null);
+    setToast(toast);
+  }, []);
+
   useEffect(() => {
     let unsubResult: UnlistenFn | undefined;
     let unsubError: UnlistenFn | undefined;
-    const settle = (toast: Toast) => {
-      awaitingId.current = null;
-      pendingRef.current = null;
-      if (pendingTimer.current != null) {
-        window.clearTimeout(pendingTimer.current);
-        pendingTimer.current = null;
-      }
-      setPending(null);
-      setToast(toast);
-    };
     listen<CmdResultEvent>('cloud://relay-event', (event) => {
       const msg = event.payload;
       if (msg?.kind !== 'cmd_result') return;
@@ -245,7 +247,7 @@ export function ServerDetailScreen({ server, initialStatus, desktopOnline, onlin
       unsubError?.();
       if (pendingTimer.current != null) window.clearTimeout(pendingTimer.current);
     };
-  }, []);
+  }, [settle]);
 
   // Console. Resolve the node id first (so commands target the right
   // host), then ask the owner for the recent backlog (`server.logs`)
@@ -294,6 +296,15 @@ export function ServerDetailScreen({ server, initialStatus, desktopOnline, onlin
         } else if (m.kind === 'server.state_changed') {
           const st = m.status as ServerStatus;
           setStatus(st);
+          // The host's status is the real confirmation: a start that reports running (or a stop
+          // that reports stopped) is done even if its cmd_result got lost on the way.
+          const action = pendingRef.current;
+          if (action) {
+            const done = action === 'stop'
+              ? st === 'stopped' || st === 'crashed'
+              : st === 'running' || st === 'crashed';
+            if (done) settle({ kind: st === 'crashed' ? 'err' : 'ok', text: st === 'crashed' ? 'The server crashed.' : friendlySuccess(`server.${action}`) });
+          }
           if (st === 'stopped' || st === 'crashed') {
             // Server went down. Keep what's on screen and pull the final
             // backlog — a crash-on-boot's last output is exactly what the
@@ -398,7 +409,7 @@ export function ServerDetailScreen({ server, initialStatus, desktopOnline, onlin
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [server.id]);
+  }, [server.id, settle]);
 
   // Poll container usage (CPU / memory) while a running server is on
   // screen. Stops + clears when the server isn't running or the desktop

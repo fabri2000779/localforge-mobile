@@ -76,8 +76,22 @@ interface Props {
   onMeUpdated: (me: Me) => void;
 }
 
-/** How long an inline Start/Stop may sit on its optimistic status without any answer from the host. */
+/** How long an inline Start/Stop may wait for a confirmed host status. */
 const ACTION_TIMEOUT_MS = 20_000;
+
+interface PendingAction {
+  serverId: string;
+  prev: ServerStatus | undefined;
+  cmd: string;
+  nodeId: string;
+  timer: number;
+  acknowledged: boolean;
+  observedStatus?: ServerStatus;
+}
+
+function isTransition(status: ServerStatus | undefined): boolean {
+  return status === 'starting' || status === 'stopping';
+}
 
 type State =
   | { kind: 'loading' }
@@ -92,16 +106,12 @@ export function ServerListScreen({ me, onlineNodeIds, desktopOnline, embedded, a
   const [state, setState] = useState<State>(isPaid ? { kind: 'loading' } : { kind: 'paywalled' });
   const [refreshing, setRefreshing] = useState(false);
   const [statuses, setStatuses] = useState<Map<string, ServerStatus>>(new Map());
-  // In-flight inline actions (request_id → what to revert to). Lets the
-  // cmd_result handler roll back the optimistic status + surface the error —
-  // failures used to leave the row on 'Starting…' forever (audit finding).
-  // Relay rejections (`error` frames) and a 20 s silence roll back the same way.
-  const pendingCmdsRef = useRef<
-    Map<string, { serverId: string; prev: ServerStatus | undefined; cmd: string; timer: number }>
-  >(new Map());
+  // A command ACK and the host's status may arrive in either order. Keep the
+  // deadline until status is confirmed, and never roll back an observed status.
+  const pendingCmdsRef = useRef<Map<string, PendingAction>>(new Map());
   const [actionErr, setActionErr] = useState<string | null>(null);
 
-  /** Drop an in-flight action, restoring the row's previous status; `message` explains why. */
+  /** End an unconfirmed action without overwriting a newer host observation. */
   const revertPending = useCallback((requestId: string, message: string | null) => {
     const pending = pendingCmdsRef.current.get(requestId);
     if (!pending) return;
@@ -109,11 +119,31 @@ export function ServerListScreen({ me, onlineNodeIds, desktopOnline, embedded, a
     window.clearTimeout(pending.timer);
     setStatuses((prevMap) => {
       const next = new Map(prevMap);
-      if (pending.prev === undefined) next.delete(pending.serverId);
-      else next.set(pending.serverId, pending.prev);
+      // An ACK alone cannot tell us whether the container is running. Likewise,
+      // a last-known transition cannot safely leave the controls disabled forever.
+      const fallback = pending.observedStatus ?? (pending.acknowledged ? 'unknown' : pending.prev);
+      if (fallback === undefined) next.delete(pending.serverId);
+      else next.set(pending.serverId, isTransition(fallback) ? 'unknown' : fallback);
       return next;
     });
     if (message) setActionErr(message);
+  }, []);
+
+  const observeStatus = useCallback((serverId: string, status: ServerStatus, snapshotId?: string) => {
+    for (const [requestId, pending] of pendingCmdsRef.current) {
+      if (pending.serverId !== serverId) continue;
+      pending.observedStatus = status;
+      const expected = pending.cmd === 'server.start' ? 'running' : 'stopped';
+      // A discovery snapshot may have been requested before the command. Only
+      // use it to complete the expected transition; a snapshot requested after
+      // the ACK (or a live transition) can also confirm a different final state.
+      const confirmed = status === expected || status === 'crashed'
+        || (snapshotId === undefined || snapshotId === `action:${requestId}`) && !isTransition(status);
+      if (confirmed) {
+        window.clearTimeout(pending.timer);
+        pendingCmdsRef.current.delete(requestId);
+      }
+    }
   }, []);
   /** Servers discovered live on a machine, keyed by machineId (the disc
    *  request_id). Includes desktops + agents now. */
@@ -126,18 +156,20 @@ export function ServerListScreen({ me, onlineNodeIds, desktopOnline, embedded, a
   // Relay status badge + per-server status from snapshots / transitions.
   useEffect(() => {
     if (!isPaid) return;
+    let cancelled = false;
     let unsubConnected: (() => void) | undefined;
     let unsubDisconnected: (() => void) | undefined;
     let unsubEvent: (() => void) | undefined;
 
     subscribeRelayConnected(() => {
-      void cloudRelaySendCmd({ type: 'cmd', cmd: 'state.snapshot', request_id: crypto.randomUUID() });
-    }).then((u) => { unsubConnected = u; });
-    subscribeRelayDisconnected(() => {}).then((u) => { unsubDisconnected = u; });
+      void cloudRelaySendCmd({ type: 'cmd', cmd: 'state.snapshot', request_id: crypto.randomUUID() }).catch(() => {});
+    }).then((u) => { if (cancelled) u(); else unsubConnected = u; });
+    subscribeRelayDisconnected(() => {}).then((u) => { if (cancelled) u(); else unsubDisconnected = u; });
     subscribeRelayEvent((msg) => {
       if (msg.kind === 'state_snapshot' && Array.isArray(msg.servers)) {
         const servers = msg.servers as Array<{ id?: string; status?: ServerStatus; name?: string }>;
         const rid = typeof msg.request_id === 'string' ? msg.request_id : '';
+        for (const s of servers) if (s?.id) observeStatus(s.id, s.status ?? 'unknown', rid);
         if (rid.startsWith('disc:')) {
           const machineId = rid.slice('disc:'.length);
           const discovered: ServerSummary[] = servers
@@ -161,10 +193,23 @@ export function ServerListScreen({ me, onlineNodeIds, desktopOnline, embedded, a
         if (pending) {
           if (msg.success === false) {
             revertPending(msg.request_id, typeof msg.error === 'string' ? msg.error : 'Command failed on the host');
-          } else {
-            // Done: the real status follows via server.state_changed.
-            pendingCmdsRef.current.delete(msg.request_id);
-            window.clearTimeout(pending.timer);
+          } else if (msg.success === true && !pending.acknowledged) {
+            pending.acknowledged = true;
+            const serverId = pending.serverId;
+            const reported = typeof msg.status === 'string' ? (msg.status as ServerStatus) : undefined;
+            if (reported) {
+              // Newer executors report the final status with the ACK.
+              observeStatus(serverId, reported);
+              setStatuses((prev) => new Map(prev).set(serverId, reported));
+            }
+            if (!reported || isTransition(reported)) {
+              // Older executors only ACK. Ask that same machine for the actual status,
+              // keeping the deadline in case its reply is lost.
+              void cloudRelaySendCmd({
+                type: 'cmd', cmd: 'state.snapshot', request_id: `action:${msg.request_id}`,
+                args: { nodeId: pending.nodeId },
+              }).catch(() => {});
+            }
           }
         }
         return;
@@ -172,13 +217,14 @@ export function ServerListScreen({ me, onlineNodeIds, desktopOnline, embedded, a
       if (msg.kind === 'server.state_changed' && typeof msg.target === 'string') {
         const target = msg.target;
         const status = (msg.status ?? 'unknown') as ServerStatus;
+        observeStatus(target, status);
         setStatuses((prev) => {
           const next = new Map(prev);
           next.set(target, status);
           return next;
         });
       }
-    }).then((u) => { unsubEvent = u; });
+    }).then((u) => { if (cancelled) u(); else unsubEvent = u; });
     // A refused cmd (role, scope) never gets a cmd_result — the `error` frame is the only answer.
     // Older relays don't echo the request_id; then every in-flight action of that cmd is reverted,
     // which is right for a role refusal anyway.
@@ -188,10 +234,11 @@ export function ServerListScreen({ me, onlineNodeIds, desktopOnline, embedded, a
         .filter(([rid, p]) => (err.request_id ? rid === err.request_id : p.cmd === err.cmd))
         .map(([rid]) => rid);
       for (const rid of hits) revertPending(rid, describeRelayError(err));
-    }).then((u) => { unsubError = u; });
+    }).then((u) => { if (cancelled) u(); else unsubError = u; });
 
     void cloudRelaySendCmd({ type: 'cmd', cmd: 'state.snapshot', request_id: crypto.randomUUID() }).catch(() => {});
     return () => {
+      cancelled = true;
       unsubConnected?.();
       unsubDisconnected?.();
       unsubEvent?.();
@@ -199,7 +246,7 @@ export function ServerListScreen({ me, onlineNodeIds, desktopOnline, embedded, a
       for (const p of pendingCmdsRef.current.values()) window.clearTimeout(p.timer);
       pendingCmdsRef.current.clear();
     };
-  }, [isPaid, revertPending]);
+  }, [isPaid, observeStatus, revertPending]);
 
   // Stable presence signal (contents, not Set identity — App.tsx mints a
   // fresh Set per event). Drives the fleet re-fetch so a machine that just
@@ -312,17 +359,19 @@ export function ServerListScreen({ me, onlineNodeIds, desktopOnline, embedded, a
   }, [allServers, machines, serverMachine]);
 
   function sendAction(server: ServerSummary, action: 'start' | 'stop') {
+    if (!canControl || [...pendingCmdsRef.current.values()].some((p) => p.serverId === server.id)) return;
     const nodeId = machineOf(server) ?? 'local';
     const requestId = crypto.randomUUID();
     const prev = statuses.get(server.id);
     const cmd = `server.${action}`;
-    // No cmd_result, no state change and no rejection within the window: the executor is not
-    // answering — give the row back instead of leaving it on Starting…/Stopping… for good.
-    const timer = window.setTimeout(
-      () => revertPending(requestId, 'No answer from the host — check that the desktop or agent is online.'),
-      ACTION_TIMEOUT_MS,
-    );
-    pendingCmdsRef.current.set(requestId, { serverId: server.id, prev, cmd, timer });
+    const timer = window.setTimeout(() => {
+      const pending = pendingCmdsRef.current.get(requestId);
+      if (!pending) return;
+      revertPending(requestId, pending.acknowledged
+        ? 'The command completed, but the current server status could not be confirmed. Refresh to check it.'
+        : 'No answer from the host — check that the desktop or agent is online.');
+    }, ACTION_TIMEOUT_MS);
+    pendingCmdsRef.current.set(requestId, { serverId: server.id, prev, cmd, nodeId, timer, acknowledged: false });
     setActionErr(null);
     void cloudRelaySendCmd({
       type: 'cmd',
